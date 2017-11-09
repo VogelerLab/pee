@@ -36,22 +36,29 @@ def sentinelCloudScore(img):
     """
     # Compute several indicators of cloudyness and take the minimum of them.
     score = ee.Image(1)
+    blueCirrusScore = ee.Image(0)
 
-    # Clouds are reasonably bright in the blue and cirrus bands.
-    score = score.min(rescale(img, 'img.blue', [0.1, 0.5]))
-    score = score.min(rescale(img, 'img.cb', [0.1, 0.3]))
-    score = score.min(rescale(img, 'img.cb + img.cirrus', [0.15, 0.2]))
+    # Clouds are reasonably bright in the blue or cirrus bands.
+    # Use .max as a pseudo OR conditional
+    blueCirrusScore = blueCirrusScore.max(rescale(img, 'img.blue', [0.1, 0.5]))
+    blueCirrusScore = blueCirrusScore.max(rescale(img, 'img.cb', [0.1, 0.5]))
+    blueCirrusScore = blueCirrusScore.max(rescale(img, 'img.cirrus', [0.1, 0.3]))
+  
+    score = score.min(blueCirrusScore);
 
     # Clouds are reasonably bright in all visible bands.
     score = score.min(rescale(img, 'img.red + img.green + img.blue', [0.2, 0.8]))
+    
+    # Clouds are reasonably bright in all infrared bands.
+    score = score.min(rescale(img, 'img.nir + img.swir1 + img.swir2', [0.3, 0.8]))
 
-    # Clouds are moist
-    ndmi = img.normalizedDifference(['nir', 'swir1'])
-    score = score.min(rescale(ndmi, 'img', [-0.1, 0.1]))
+#    # Clouds are moist
+#    ndmi = img.normalizedDifference(['nir', 'swir1'])
+#    score = score.min(rescale(ndmi, 'img', [-0.1, 0.1]))
 
-    # However, clouds are not snow.
+    # Also mask snow (consider doing snow masking seperately as high ndsi & high vis)
     ndsi = img.normalizedDifference(['green', 'swir1'])
-    score = score.min(rescale(ndsi, 'img', [0.8, 0.6]))
+    score = score.max(rescale(ndsi, 'img', [0, 1.0]))
 
     score = score.multiply(100).byte()
 
@@ -82,7 +89,7 @@ def simpleTDOM2(c):
   """
   shadowSumBands = ['nir','swir1']
   irSumThresh = 0.4
-  zShadowThresh = -1.2
+  zShadowThresh = -1.5 # default = -1.2
   # Get some pixel-wise stats for the time series
   irStdDev = c.select(shadowSumBands).reduce(ee.Reducer.stdDev())
   irMean = c.select(shadowSumBands).mean()
@@ -188,7 +195,7 @@ def dailyMosaics(imgs):
     return imgs
 
 
-def s2_masking(img, shadows='TDOM'):
+def s2_masking(img):
     """ Function for wrapping the entire process to be applied across collection
     """
     img = sentinelCloudScore(img)
