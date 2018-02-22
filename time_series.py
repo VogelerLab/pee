@@ -9,7 +9,7 @@ Created on Mon Jul 31 15:40:56 2017
 # particular sensor
 
 import ee
-import ee.mapclient
+# import ee.mapclient
 ee.Initialize()
 import numpy as np
 
@@ -85,6 +85,169 @@ def filter_reduce_seasons(images,year):
                                         ,empty))
     
     return merged
+
+def filter_reduce_seasons_custom(images,year, reducer, suffix):
+    """ Filter collection and reduce an image collection by year and seasons.
+    
+    Parameters
+    ----------
+    images: ee.ImageCollection
+    
+    year: int
+    
+    reducer: ee.Reducer
+    
+    suffix: str
+    
+    Returns
+    -------
+    ee.Image
+        Image with bands for median of 'year', seasons within 'year' for
+        each of the original bands in 'images', and differences between
+        seasons.
+        
+    Authors
+    -------
+    Steven Filippelli
+    """
+    
+    # Filter and reduce by year and seasons
+    annual = images.reduce(reducer)
+    spring = images.filterDate(str(year)+'-03-20', str(year)+'-06-20').reduce(reducer)
+    summer = images.filterDate(str(year)+'-06-21', str(year)+'-09-22').reduce(reducer)
+    fall = images.filterDate(str(year)+'-09-23', str(year)+'-12-20').reduce(reducer)
+    #TODO: Use continuous winter(s). Winter 2010-11 and 11-12. Rather than splitting winter by other seasons.
+    winter = (images.filter(ee.Filter.Or(ee.Filter.date(str(year)+'-01-01', str(year)+'-03-19'),
+                                             ee.Filter.date(str(year)+'-12-21', str(year)+'-12-31')))
+                        .reduce(reducer))
+
+    # Get difference between seasons
+    spring_summer = spring.subtract(summer)
+    spring_fall = spring.subtract(fall)
+    spring_winter = spring.subtract(winter)
+    summer_fall = summer.subtract(fall)
+    summer_winter = summer.subtract(winter)
+    fall_winter = fall.subtract(winter)
+
+
+    # Rename bands
+    def appendToBandNames(i, string):
+        names = i.bandNames()
+        names = names.map(lambda name: ee.String(name).cat(string))
+        return i.rename(names)
+    
+    annual = appendToBandNames(annual, "_annual_"+suffix)
+    spring = appendToBandNames(spring, "_spring_"+suffix)
+    summer = appendToBandNames(summer, "_summer_"+suffix)
+    fall = appendToBandNames(fall, "_fall_"+suffix)
+    winter = appendToBandNames(winter, "_winter_"+suffix)
+    
+    spring_summer = appendToBandNames(spring_summer, "_spring_summer_"+suffix)
+    spring_fall = appendToBandNames(spring_fall, "_spring_fall_"+suffix)
+    spring_winter = appendToBandNames(spring_winter, "_spring_winter_"+suffix)
+    summer_fall = appendToBandNames(summer_fall, "_summer_fall_"+suffix)
+    summer_winter = appendToBandNames(summer_winter, "_summer_winter_"+suffix)
+    fall_winter = appendToBandNames(fall_winter, "_fall_winter_"+suffix)
+    
+    # Combine bands into a single image
+    image_list = ee.List([annual, spring, summer, fall, winter,
+                        spring_summer, spring_fall, spring_winter,
+                        summer_fall, summer_winter, fall_winter])
+  
+    empty = ee.Image().select()
+  
+    merged = ee.Image(image_list.iterate(lambda image, result: 
+                                         ee.Image(result).addBands(image)
+                                        ,empty))
+    
+    return merged
+
+
+def reduce_seasons(images, reducer, suffix):
+    """ Reduce an image collection by seasons and ignoring year.
+    
+    Parameters
+    ----------
+    images: ee.ImageCollection
+    
+    reducer: ee.Reducer
+    
+    suffix: str
+    
+    Returns
+    -------
+    ee.Image
+        Image with bands for reduced by season and differences between seasons 
+        for  each of the original bands in 'images'.
+        
+    Authors
+    -------
+    Steven Filippelli
+    """
+    
+    # Filter and reduce by seasons, using julian day of non-leap years
+    annual = images.reduce(reducer)
+    spring = images.filter(ee.Filter.dayOfYear(79, 172)).reduce(reducer)
+    summer = images.filter(ee.Filter.dayOfYear(172, 266)).reduce(reducer)
+    fall = images.filter(ee.Filter.dayOfYear(266, 355)).reduce(reducer)
+    winter = images.filter(ee.Filter.Or(ee.Filter.dayOfYear(355, 366),
+                                        ee.Filter.dayOfYear(1,79)))       \
+                    .reduce(reducer)
+                    
+    # remove GEE's reducer suffix from band names
+    def fixBandNames(i):
+        names = i.bandNames()
+        names = names.map(lambda name: ee.String(name).split("_").get(0))
+        return i.rename(names)
+    
+    annual = fixBandNames(annual)
+    spring = fixBandNames(spring)
+    summer = fixBandNames(summer)
+    fall = fixBandNames(fall)
+    winter = fixBandNames(winter)
+    
+
+    # Get difference between seasons
+    spring_summer = spring.subtract(summer)
+    spring_fall = spring.subtract(fall)
+    spring_winter = spring.subtract(winter)
+    summer_fall = summer.subtract(fall)
+    summer_winter = summer.subtract(winter)
+    fall_winter = fall.subtract(winter)
+
+
+    # Rename bands
+    def appendToBandNames(i, string):
+        names = i.bandNames()
+        names = names.map(lambda name: ee.String(name).cat(string))
+        return i.rename(names)
+    
+    annual = appendToBandNames(annual, "_annual_"+suffix)
+    spring = appendToBandNames(spring, "_spring_"+suffix)
+    summer = appendToBandNames(summer, "_summer_"+suffix)
+    fall = appendToBandNames(fall, "_fall_"+suffix)
+    winter = appendToBandNames(winter, "_winter_"+suffix)
+    
+    spring_summer = appendToBandNames(spring_summer, "_spring_summer_"+suffix)
+    spring_fall = appendToBandNames(spring_fall, "_spring_fall_"+suffix)
+    spring_winter = appendToBandNames(spring_winter, "_spring_winter_"+suffix)
+    summer_fall = appendToBandNames(summer_fall, "_summer_fall_"+suffix)
+    summer_winter = appendToBandNames(summer_winter, "_summer_winter_"+suffix)
+    fall_winter = appendToBandNames(fall_winter, "_fall_winter_"+suffix)
+    
+    # Combine bands into a single image
+    image_list = ee.List([annual, spring, summer, fall, winter,
+                        spring_summer, spring_fall, spring_winter,
+                        summer_fall, summer_winter, fall_winter])
+  
+    empty = ee.Image().select()
+  
+    merged = ee.Image(image_list.iterate(lambda image, result: 
+                                         ee.Image(result).addBands(image)
+                                        ,empty))
+    
+    return merged
+
 
 
 def fit_harmonic(collection, band, peak_norm=None, rgb=False):
