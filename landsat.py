@@ -2,7 +2,7 @@
 
 import numpy as np
 import ee
-import ee.mapclient
+#import ee.mapclient
 ee.Initialize()
 
 
@@ -45,17 +45,18 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian, endJulian
     Updated 8-Sept-16 by Joshua Goldstein
     Updated by Steven Filippelli 10-May-2017 to remove cloud scoring and use
         SR product instead of TOA
+    Updated 15-Feb-18 by Steven Filippelli. Use Colleciton 1 Tier-1 SR
     
-    Date Modified: 2017-06-17
+    Date Modified: 2018-02-15
     """
-    sensorBandDictLandsatSR =ee.Dictionary({'L8' : ee.List([1,2,3,4,5,6,7,8]), # no coastal for L8
-                        'L7' : ee.List([0,1,2,3,4,5,6,7]),
-                        'L5' : ee.List([0,1,2,3,4,5,6,7]),
-                        'L4' : ee.List([0,1,2,3,4,5,6,7])})
+    sensorBandDictLandsatSR =ee.Dictionary({'L8' : ee.List([1,2,3,4,5,6,10]),
+                                            'L7' : ee.List([0,1,2,3,4,6,9]),
+                                            'L5' : ee.List([0,1,2,3,4,6,9]),
+                                            'L4' : ee.List([0,1,2,3,4,6,9])})
 
-    bandNamesLandsatSR = ee.List(['blue','green','red','nir','swir1','swir2', 'cfmask', 'cfmask_conf'])
+    bandNamesLandsatSR = ee.List(['blue','green','red','nir','swir1','swir2','pixel_qa'])
 
-    l4SRs = (ee.ImageCollection('LANDSAT/LT4_SR')
+    l4SRs = (ee.ImageCollection('LANDSAT/LT04/C01/T1_SR')
       .filterDate(startDate,endDate)
       .filter(ee.Filter.calendarRange(startJulian,endJulian))
       .filterBounds(studyArea)
@@ -63,19 +64,19 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian, endJulian
 
 
     # TODO: clip L5 edges
-    l5SRs = (ee.ImageCollection('LANDSAT/LT5_SR')
+    l5SRs = (ee.ImageCollection('LANDSAT/LT05/C01/T1_SR')
             .filterDate(startDate,endDate)
             .filter(ee.Filter.calendarRange(startJulian,endJulian))
             .filterBounds(studyArea)
             .select(sensorBandDictLandsatSR.get('L5'),bandNamesLandsatSR))
 
-    l8SRs = (ee.ImageCollection('LANDSAT/LC8_SR')
+    l8SRs = (ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
             .filterDate(startDate,endDate)
             .filter(ee.Filter.calendarRange(startJulian,endJulian))
             .filterBounds(studyArea)
             .select(sensorBandDictLandsatSR.get('L8'),bandNamesLandsatSR))
 
-    l7SRs = (ee.ImageCollection('LANDSAT/LE7_SR')
+    l7SRs = (ee.ImageCollection('LANDSAT/LE07/C01/T1_SR')
             .filterDate(startDate,endDate)
             .filter(ee.Filter.calendarRange(startJulian,endJulian))
             .filterBounds(studyArea)
@@ -359,7 +360,7 @@ def tasseled_cap(image):
         return image.multiply(matrix).reduce(ee.call("Reducer.sum")).float()
 
     # Find the coeffs
-    coeffs = ee.List(tc_coeff_dict.get(image.get('satellite')))
+    coeffs = ee.List(tc_coeff_dict.get(image.get('SATELLITE')))
                   
     # Compute the tc transformation and give it useful names
     tco = coeffs.map(mult_sum)
@@ -394,7 +395,7 @@ def landsat_rename_bands(image):
     'LANDSAT_5': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'},
     'LANDSAT_4': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'}
     })
-    band_dict = ee.Dictionary(band_dicts.get(image.get('satellite')))
+    band_dict = ee.Dictionary(band_dicts.get(image.get('SATELLITE')))
 
     def swap_name(b):
         return ee.Algorithms.If(band_dict.contains(b), band_dict.get(b), b)
