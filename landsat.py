@@ -6,7 +6,8 @@ import ee
 ee.Initialize()
 
 
-def get_landsat_collection(studyArea, startDate, endDate, startJulian, endJulian):
+def get_landsat_collection(studyArea, startDate, endDate, startJulian,
+                           endJulian, satellites=["L4", "L5", "L7", "L8"]):
     """ Return a Landsat collection.
 
     Get collection of all landsat images that intersect the given feature,
@@ -30,6 +31,9 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian, endJulian
     endJulian: int
         Ending Julian date- Supports wrapping for tropics and 
         southern hemisphere
+        
+    satellites: list
+        list of satellites to include
         
     Returns
     -------
@@ -83,7 +87,8 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian, endJulian
             .select(sensorBandDictLandsatSR.get('L7'),bandNamesLandsatSR))
 
     # get merged image collection without messing up the system:index
-    clist = ee.List([l4SRs, l5SRs, l8SRs, l7SRs])
+    sat_dict = {"L4":l4SRs, "L5":l5SRs, "L7":l7SRs, "L8":l8SRs}
+    clist = ee.List([sat_dict.get(sat) for sat in satellites])
     def get_images(collection):
         return (ee.ImageCollection(collection)
                 .toList(ee.ImageCollection(collection).size().max(1)))
@@ -385,6 +390,11 @@ def wetness(i):
 def brightness(i):
     return tasseled_cap(i).select("brightness")
 
+def angle(i):
+    tcb = tasseled_cap(i).select("brightness")
+    tcg = tasseled_cap(i).select("greenness")
+    return (tcg.divide(tcb)).atan().multiply(180/np.pi).multiply(100).rename(["angle"])
+
 
 def landsat_rename_bands(image):
     # Function for rename the bands of TM, ETM+, and OLI to aid
@@ -443,7 +453,8 @@ def landsat_spectral_indices(image, ixlist):
              "tasseled_cap":tasseled_cap(image),
              "greenness":greenness(image),
              "wetness":wetness(image),
-             "brightness":brightness(image)
+             "brightness":brightness(image),
+             "angle":angle(image)
             })
     
     ixbands = ixbands.values(ixlist)
