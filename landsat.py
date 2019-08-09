@@ -6,6 +6,43 @@ import ee
 ee.Initialize()
 
 
+def rename_bands(image):
+    # Function for rename the bands of TM, ETM+, and OLI to aid
+    # easy interpretation and calculation of spectral indices
+    # TODO: it may be faster and easier to use local dicts rather than ee.Dict
+    band_dicts = ee.Dictionary({
+    'LANDSAT_8': {'B1':'cb', 'B2':'blue', 'B3':'green', 'B4':'red', 'B5':'nir', 'B6':'swir1', 'B7':'swir2', 'B10':'temp1', 'B11':'temp2'},
+    'LANDSAT_7': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'},
+    'LANDSAT_5': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'},
+    'LANDSAT_4': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'}
+    })
+    band_dict = ee.Dictionary(band_dicts.get(image.get('SATELLITE')))
+
+    def swap_name(b):
+        return ee.Algorithms.If(band_dict.contains(b), band_dict.get(b), b)
+  
+    new_bands = image.bandNames().map(swap_name)
+    return image.rename(new_bands)
+
+
+def rescale_l8sr(scene):
+    """ rescale L8 SR back to surface reflectance (0-1)
+    Author: George Azzari (modified Steven Filippelli)
+    """
+    opt = scene.select(['cb', 'blue', 'green', 'red', 'nir', 'swir1', 'swir2'])
+    therm = scene.select(['temp1', 'temp2'])
+    masks = scene.select(['sr_aerosol', 'pixel_qa', 'radsat_qa'])
+
+    opt = opt.multiply(0.0001)
+    therm = therm.multiply(0.1)
+
+    scaled = ee.Image(ee.Image.cat([opt, therm, masks]).copyProperties(scene))
+    # System properties are not copied (?)
+    scaled = scaled.set('system:time_start', scene.get('system:time_start'))
+
+    return scaled
+
+
 def get_landsat_collection(studyArea, startDate, endDate, startJulian,
                            endJulian, satellites=["L4", "L5", "L7", "L8"]):
     """ Return a Landsat collection.
@@ -87,6 +124,7 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian,
             .select(sensorBandDictLandsatSR.get('L7'),bandNamesLandsatSR))
 
     # get merged image collection without messing up the system:index
+    # TODO: do not convert collection to list. This is slow.
     sat_dict = {"L4":l4SRs, "L5":l5SRs, "L7":l7SRs, "L8":l8SRs}
     clist = ee.List([sat_dict.get(sat) for sat in satellites])
     def get_images(collection):
@@ -100,169 +138,18 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian,
     return out
 
 
-def filter_reduce_seasons(images,year):
-    """ Filter collection and reduce an image collection by year and seasons.
-    
-    Parameters
-    ----------
-    images: ee.ImageCollection
-    
-    year: int
-    
-    Returns
-    -------
-    ee.Image
-        Image with bands for median of 'year', seasons within 'year' for
-        each of the original bands in 'images', and differences between
-        seasons.
-        
-    Authors
-    -------
-    Steven Filippelli
-    """
-    
-    # Filter and reduce by year and seasons
-    annual_med = images.median()
-    spring_med = images.filterDate(str(year)+'-03-20', str(year)+'-06-20').median()
-    summer_med = images.filterDate(str(year)+'-06-21', str(year)+'-09-22').median()
-    fall_med = images.filterDate(str(year)+'-09-23', str(year)+'-12-20').median()
-    #TODO: Use continuous winter(s). Winter 2010-11 and 11-12. Rather than splitting winter by other seasons.
-    winter_med = (images.filter(ee.Filter.Or(ee.Filter.date(str(year)+'-01-01', str(year)+'-03-19'),
-                                             ee.Filter.date(str(year)+'-12-21', str(year)+'-12-31')))
-                        .median())
-
-    # Get difference between seasons
-    spring_summer_med = spring_med.subtract(summer_med)
-    spring_fall_med = spring_med.subtract(fall_med)
-    spring_winter_med = spring_med.subtract(winter_med)
-    summer_fall_med = summer_med.subtract(fall_med)
-    summer_winter_med = summer_med.subtract(winter_med)
-    fall_winter_med = fall_med.subtract(winter_med)
-
-
-    # Rename bands
-    def appendToBandNames(i, string):
-        names = i.bandNames()
-        names = names.map(lambda name: ee.String(name).cat(string))
-        return i.rename(names)
-    
-    annual_med = appendToBandNames(annual_med, "_annual_med")
-    spring_med = appendToBandNames(spring_med, "_spring_med")
-    summer_med = appendToBandNames(summer_med, "_summer_med")
-    fall_med = appendToBandNames(fall_med, "_fall_med")
-    winter_med = appendToBandNames(winter_med, "_winter_med")
-    
-    spring_summer_med = appendToBandNames(spring_summer_med, "_spring_summer_med")
-    spring_fall_med = appendToBandNames(spring_fall_med, "_spring_fall_med")
-    spring_winter_med = appendToBandNames(spring_winter_med, "_spring_winter_med")
-    summer_fall_med = appendToBandNames(summer_fall_med, "_summer_fall_med")
-    summer_winter_med = appendToBandNames(summer_winter_med, "_summer_winter_med")
-    fall_winter_med = appendToBandNames(fall_winter_med, "_fall_winter_med")
-    
-    # Combine bands into a single image
-    image_list = ee.List([annual_med, spring_med, summer_med, fall_med, winter_med,
-                        spring_summer_med, spring_fall_med, spring_winter_med,
-                        summer_fall_med, summer_winter_med, fall_winter_med])
-  
-    empty = ee.Image().select()
-  
-    merged = ee.Image(image_list.iterate(lambda image, result: 
-                                         ee.Image(result).addBands(image)
-                                        ,empty))
-    
-    return merged
-
-
-def landsat_harmonics(collection, band, peak_norm=None, rgb=False):
-    """ Return amplitude and phase image for a band in an image collection.
-    
-    Parameters
-    ----------
-    collection: ee.ImageCollection
-        Earth engine image collection of a Landsat time series.
-        
-    band: str
-        Name of band to select from each image in "images" for calculating
-        harmonic phase and amplitude over time.
-        
-    rgb: bool
-        Add band to returned image to display phase as hue and amplitude as
-        brightness.
-    
-    Returns
-    -------
-    ee.Image
-        Earth engine image with harmonic phase and amplitude of the selected
-        band for the given image collection
-        
-    Authors
-    -------
-    Nick Clinton. Adapted by Steven Filippeli.
-    
-    Date Modified: 2017-06-14
-    """
-    def get_time(image):
-        # Compute time in fractional years since the epoch.
-        timeField = 'system:time_start'
-        date = ee.Date(image.get(timeField))
-        years = date.difference(ee.Date('1970-01-01'), 'year')
-        return image.addBands(ee.Image(years).rename(['t']).float())
-
-    def get_constant(image):
-        return image.addBands(ee.Image.constant(1))
-
-    # Get images
-    images = collection.map(get_time).map(get_constant)
-
-    # Name of the dependent variable.
-    dependent = ee.String(band)
-
-    # Use these independent variables in the harmonic regression.
-    harmonicIndependents = ee.List(['constant', 't', 'cos', 'sin'])
-
-    # Add harmonic terms as new image bands.
-    def get_cos_sin(image):
-        timeRadians = image.select('t').multiply(2 * np.pi)
-        return (image
-                .addBands(timeRadians.cos().rename(['cos']))
-                .addBands(timeRadians.sin().rename(['sin'])))
-
-    harmonicLandsat = images.map(get_cos_sin)
-
-    # The output of the regression reduction is a 4x1 array image.
-    harmonicTrend = (harmonicLandsat
-      .select(harmonicIndependents.add(dependent))
-      .reduce(ee.Reducer.linearRegression(harmonicIndependents.length(), 1)))
-
-    # Turn the array image into a multi-band image of coefficients.
-    harmonicTrendCoefficients = (harmonicTrend.select('coefficients')
-      .arrayProject([0])
-      .arrayFlatten([harmonicIndependents]))
-
-    # Compute phase and amplitude.
-    phase = (harmonicTrendCoefficients.select('cos')
-                .atan2(harmonicTrendCoefficients
-                       .select('sin')).rename([band+'_phase']))
-
-    amplitude = (harmonicTrendCoefficients.select('cos').hypot(
-                    harmonicTrendCoefficients.select('sin'))
-                    .rename([band+'_amplitude']))
-
-    harmonic = phase.addBands(amplitude)
-
-    # Use the HSV to RGB transform to display phase and amplitude
-    if rgb:
-        rgb = phase.unitScale(-np.pi, np.pi).addBands(
-                  amplitude.multiply(2.5)).addBands(
-                  ee.Image(1)).hsvToRgb()
-
-        harmonic = harmonic.addBands(rgb)
-
-    return harmonic
-
-
 ###############################################################################
 #-------------Landsat spectral index functions --------------------------------
+# TODO: TSAVI (Baret 1989), TVI (Mcdaniel and Haas 1982), GCVI (Gitelson 2003) - used for crops; 
+
+def sri(i):
+    return (i.expression("nir / red", 
+                        {'nir' : i.select('nir'),
+                         'red' : i.select('red')
+                        })
+            .select([0], ['sri']))
+
+
 def ndvi(i):
     return (i.normalizedDifference(["nir", "red"])
              .select([0], ["ndvi"]))
@@ -277,11 +164,11 @@ def evi(i):
            .select([0], ["evi"]))
 
 
-def savi(i):
-  # Assuming L=0.5
-    return (i.expression("((nir - red) / (nir + red + 0.5)) * 1.5",
+def savi(i, L=0.5):
+    return (i.expression("((nir - red) / (nir + red + L)) * (1 + L)",
                       {'nir':i.select('nir'),
-                       'red':i.select('red')
+                       'red':i.select('red'),
+                       'L':L
                       })
           .select([0], ["savi"]))
 
@@ -309,7 +196,35 @@ def nbr2(i):
           .select([0], ["nbr2"]))
 
 
+def cri1(i):
+    """
+    Carotenoid Reflectance Index 1 (Gitelson 2002).  
+    Hill 2013 RSE found it discriminated treed landscape from others in texas savannahs
+    """
+    return (i.expression("(1 / blue) - (1 / green)",
+                      {'green':i.select('green'),
+                       'blue':i.select('blue')
+                      })
+          .select([0], ["cri1"]))
+
+
+def satvi(i, L=0.5):
+    """
+    Soil Adjusted Total Vegetation Index (Marsett et al. 2006)
+    Hill 2013 RSE adapted it for S2 and found it corresponded to a gradient of increasing tree cover.
+    """
+    return (i.expression("((swir1 - red) / (swir1 + red + L)) * (1 + L) - (swir2 / 2)",
+                    {'swir1':i.select('swir1'),
+                     'red':i.select('red'),
+                     'swir2':i.select('swir2'),
+                     'L':L
+                      })
+          .select([0], ["satvi"]))
+
+
 # ---Tasseled cap band coefficients--------
+# TODO: Use Surface Reflectance TCAP (Crist 1985) for SR data
+
 # Baig 2014 coeffs - TOA refl (http:#www.tandfonline.com/doi/pdf/10.1080/2150704X.2014.915434)
 l8_tc_coeffs = [ee.Image([0.3029, 0.2786, 0.4733, 0.5599, 0.508, 0.1872]),
               ee.Image([-0.2941, -0.243, -0.5424, 0.7276, 0.0713, -0.1608]),
@@ -396,25 +311,10 @@ def angle(i):
     return (tcg.divide(tcb)).atan().multiply(180/np.pi).multiply(100).rename(["angle"])
 
 
-def landsat_rename_bands(image):
-    # Function for rename the bands of TM, ETM+, and OLI to aid
-    # easy interpretation and calculation of spectral indices
-    band_dicts = ee.Dictionary({
-    'LANDSAT_8': {'B1':'coastal', 'B2':'blue', 'B3':'green', 'B4':'red', 'B5':'nir', 'B6':'swir1', 'B7':'swir2'},
-    'LANDSAT_7': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'},
-    'LANDSAT_5': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'},
-    'LANDSAT_4': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'}
-    })
-    band_dict = ee.Dictionary(band_dicts.get(image.get('SATELLITE')))
-
-    def swap_name(b):
-        return ee.Algorithms.If(band_dict.contains(b), band_dict.get(b), b)
-  
-    new_bands = image.bandNames().map(swap_name)
-    return image.rename(new_bands)
 
 
-def landsat_spectral_indices(image, ixlist):
+
+def specixs(image, ixlist='all'):
     """ Get landsat spectral indices
 
     Parameters
@@ -440,16 +340,19 @@ def landsat_spectral_indices(image, ixlist):
     """
 
     # check if bands were already renamed, and if not then rename them
-    image = landsat_rename_bands(image)
+    image = rename_bands(image)
 
     ixbands = ee.Dictionary(
-            {"ndvi":ndvi(image),
+            {"sri":sri(image),
+             "ndvi":ndvi(image),
              "evi":evi(image),
              "savi":savi(image),
              "msavi":msavi(image),
              "ndmi":ndmi(image),
              "nbr":nbr(image),
              "nbr2":nbr2(image),
+             "cri1":cri1(image),
+             "satvi":satvi(image),
              "tasseled_cap":tasseled_cap(image),
              "greenness":greenness(image),
              "wetness":wetness(image),
@@ -457,6 +360,13 @@ def landsat_spectral_indices(image, ixlist):
              "angle":angle(image)
             })
     
+    if ixlist=='all':
+        # remove duplicate retrieval of TCAP indices
+        ixlist = ixbands.keys().removeAll(['greenness', 'wetness', 'brightness'])
+    elif ixlist=='no_tcap':
+        # remove all tcap indices
+        ixlist = ixbands.keys().removeAll(['tasseled_cap', 'greenness', 'wetness', 'brightness', 'angle'])
+        
     ixbands = ixbands.values(ixlist)
 
     # convert list of images to multiband image
