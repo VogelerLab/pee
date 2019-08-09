@@ -9,19 +9,63 @@ import ee.mapclient
 ee.Initialize()
 from math import pi
 
+# --------------- Prep ------------------------------------------------------#
+
+def rename_bands(img):
+    """
+        GEE naming convention:
+        Name  Min Max   Scale   Resolution	Wavelength	Description
+        B1    0   10000	0.0001  60 METERS   443nm       Aerosols
+        B2    0   10000	0.0001	10 METERS   490nm       Blue
+        B3    0   10000	0.0001	10 METERS   560nm       Green
+        B4    0   10000	0.0001	10 METERS   665nm       Red
+        B5    0   10000	0.0001	20 METERS   705nm       Red Edge 1
+        B6    0   10000	0.0001	20 METERS   740nm       Red Edge 2
+        B7    0   10000	0.0001	20 METERS   783nm       Red Edge 3
+        B8    0   10000	0.0001	10 METERS   842nm       NIR
+        B8a   0   10000	0.0001	20 METERS   865nm       Red Edge 4
+        B9    0   10000	0.0001	60 METERS   940nm       Water vapor
+        B10   0   10000	0.0001	60 METERS   1375nm      Cirrus
+        B11   0   10000	0.0001	20 METERS   1610nm      SWIR 1
+        B12   0   10000	0.0001	20 METERS   2190nm      SWIR 2
+        QA10                    10 METERS               Always empty
+        QA20                    20 METERS               Always empty
+        QA60                    60 METERS               Cloud mask
+        """
+    rename_dict = {'B1':'cb',
+                   'B2':'blue',
+                   'B3':'green',
+                   'B4':'red',
+                   'B5':'re1',
+                   'B6':'re2',
+                   'B7':'re3',
+                   'B8':'nir',
+                   'B8A':'re4',
+                   'B9':'waterVapor',
+                   'B10':'cirrus',
+                   'B11':'swir1',
+                   'B12':'swir2'}
+    return img.select(list(rename_dict.keys()), list(rename_dict.values()))
+
+
+def prep_l1c_img(img):
+    """Rename and rescale all bands to reflectance"""
+    t = rename_bands(img).multiply(0.0001) # Rescale to 0-1
+    out = t.copyProperties(img).copyProperties(img,['system:time_start']).set('date', img.date().format('YYYY-MM-dd'))
+    return out
 
 #--------------- Cloud Masking ----------------------------------------------#
 
 # CloudScore originally written by Matt Hancher and adapted for S2 data by Ian Housman
 # User Params
 cloudThresh = 20 # Ranges from 1-100.Lower value will mask more pixels out. Generally 10-30 works well with 20 being used most commonly 
-cloudHeights = ee.List.sequence(200,10000,500) # Height of clouds to use to project cloud shadows
-irSumThresh = 0.35 # Sum of IR bands to ☻include as shadows within TDOM and the shadow shift method (lower number masks out less)
-dilatePixels = 2 # Pixels to dilate around clouds
-contractPixels = 1 # Pixels to reduce cloud mask and dark shadows by to reduce inclusion of single-pixel comission errors
+cloudHeights = ee.List.sequence(200,10000,500) # Height of clouds to use to project cloud shadows (min of 500 used by Ian)
+irSumThresh = 0.35 # Sum of IR bands to include as shadows within TDOM and the shadow shift method (lower number masks out less)
+dilatePixels = 2 # Pixels to dilate around clouds (3)
+contractPixels = 1 # Pixels to reduce cloud mask and dark shadows by to reduce inclusion of single-pixel comission errors (2)
 
 
-def rescale(img, exp, thresholds):
+def _rescale(img, exp, thresholds):
     return (img.expression(exp, {'img': img})
                .subtract(thresholds[0]).divide(thresholds[1] - thresholds[0]))
 
@@ -40,25 +84,25 @@ def sentinelCloudScore(img):
 
     # Clouds are reasonably bright in the blue or cirrus bands.
     # Use .max as a pseudo OR conditional
-    blueCirrusScore = blueCirrusScore.max(rescale(img, 'img.blue', [0.1, 0.5]))
-    blueCirrusScore = blueCirrusScore.max(rescale(img, 'img.cb', [0.1, 0.5]))
-    blueCirrusScore = blueCirrusScore.max(rescale(img, 'img.cirrus', [0.1, 0.3]))
+    blueCirrusScore = blueCirrusScore.max(_rescale(img, 'img.blue', [0.1, 0.5]))
+    blueCirrusScore = blueCirrusScore.max(_rescale(img, 'img.cb', [0.1, 0.5]))
+    blueCirrusScore = blueCirrusScore.max(_rescale(img, 'img.cirrus', [0.1, 0.3]))
   
     score = score.min(blueCirrusScore);
 
     # Clouds are reasonably bright in all visible bands.
-    score = score.min(rescale(img, 'img.red + img.green + img.blue', [0.2, 0.8]))
+    score = score.min(_rescale(img, 'img.red + img.green + img.blue', [0.2, 0.8]))
     
     # Clouds are reasonably bright in all infrared bands.
-    score = score.min(rescale(img, 'img.nir + img.swir1 + img.swir2', [0.3, 0.8]))
+    score = score.min(_rescale(img, 'img.nir + img.swir1 + img.swir2', [0.3, 0.8]))
 
 #    # Clouds are moist
 #    ndmi = img.normalizedDifference(['nir', 'swir1'])
-#    score = score.min(rescale(ndmi, 'img', [-0.1, 0.1]))
+#    score = score.min(_rescale(ndmi, 'img', [-0.1, 0.1]))
 
     # Also mask snow (consider doing snow masking seperately as high ndsi & high vis)
     ndsi = img.normalizedDifference(['green', 'swir1'])
-    score = score.max(rescale(ndsi, 'img', [0, 1.0]))
+    score = score.max(_rescale(ndsi, 'img', [0, 1.0]))
 
     score = score.multiply(100).byte()
 
@@ -83,28 +127,28 @@ def maskS2clouds(image):
 
 
 def simpleTDOM2(c):
-  """ Cloud shadow masking with TDOM
+    """ Cloud shadow masking with TDOM
   
-  Author: Ian Housman
-  """
-  shadowSumBands = ['nir','swir1']
-  irSumThresh = 0.4
-  zShadowThresh = -1.5 # default = -1.2
-  # Get some pixel-wise stats for the time series
-  irStdDev = c.select(shadowSumBands).reduce(ee.Reducer.stdDev())
-  irMean = c.select(shadowSumBands).mean()
-  bandNames = ee.Image(c.first()).bandNames()
+    Author: Ian Housman
+    """
+    shadowSumBands = ['nir','swir1']
+    irSumThresh = 0.4
+    zShadowThresh = -1.5 # default = -1.2
+    # Get some pixel-wise stats for the time series
+    irStdDev = c.select(shadowSumBands).reduce(ee.Reducer.stdDev())
+    irMean = c.select(shadowSumBands).mean()
+    bandNames = ee.Image(c.first()).bandNames()
 #  print('bandNames',bandNames)
   # Mask out dark dark outliers
-  def dark_outliers(img):
-    z = img.select(shadowSumBands).subtract(irMean).divide(irStdDev)
-    irSum = img.select(shadowSumBands).reduce(ee.Reducer.sum())
-    m = z.lt(zShadowThresh).reduce(ee.Reducer.sum()).eq(2).And(irSum.lt(irSumThresh)).Not()
-    return img.updateMask(img.mask().And(m))
+    def dark_outliers(img):
+        z = img.select(shadowSumBands).subtract(irMean).divide(irStdDev)
+        irSum = img.select(shadowSumBands).reduce(ee.Reducer.sum())
+        m = z.lt(zShadowThresh).reduce(ee.Reducer.sum()).eq(2).And(irSum.lt(irSumThresh)).Not()
+        return img.updateMask(img.mask().And(m))
 
-  c = c.map(dark_outliers)
+    c = c.map(dark_outliers)
 
-  return c.select(bandNames)
+    return c.select(bandNames)
 
 
 def projectShadows(cloudMask,image,cloudHeights):
@@ -228,12 +272,15 @@ def s2_bustclouds_tdom(imgs):
     return imgs
 
 
-
-
 ###############################################################################
 #------------- Sentinel-2 spectral index functions ----------------------------
+
 def sri(i):
-    return i.select("nir").divide(i.select("red"))
+    return (i.expression("nir / red", 
+                        {'nir' : i.select('nir'),
+                         'red' : i.select('red')
+                        })
+            .select([0], ['sri']))
 
 def ndvi(i):
     return (i.normalizedDifference(["nir", "red"])
@@ -249,11 +296,11 @@ def evi(i):
            .select([0], ["evi"]))
 
 
-def savi(i):
-  # Assuming L=0.5
-    return (i.expression("((nir - red) / (nir + red + 0.5)) * 1.5",
+def savi(i, L=0.5):
+    return (i.expression("((nir - red) / (nir + red + L)) * (1 + L)",
                       {'nir':i.select('nir'),
-                       'red':i.select('red')
+                       'red':i.select('red'),
+                       'L':L
                       })
           .select([0], ["savi"]))
 
@@ -280,26 +327,41 @@ def nbr2(i):
     return (i.normalizedDifference(["swir1", "swir2"])
           .select([0], ["nbr2"]))
 
-def re_ndvi(i):
-    return (i.normalizedDifference(["nir", "re2"])
-             .select([0], ["re_ndvi"]))
+# --- Red-edge indices---# 
     
-    
-def re_pos(i):
+def s2rep(i):
+    """ Red-edge Position Index (Guyot and Baret 1988)
+    Indicator of crop N and growth status
+    """
     return (i.expression(".705 + 0.035 * (0.5 * (re3 + red) - re1) / (re2 - re1)",
                       {'re1':i.select('re1'),
                        're2':i.select('re2'),
                        're3':i.select('re3'),
                        'red':i.select('red')
                       })
-           .select([0], ["re_pos"]))
-    
+           .select([0], ["s2rep"]))
+
+
 def ndvi705(i):
+    """ Red-edge Normalized Difference Vegetation Index (Gitelson and Merzlyak 1994)
+    Proposed for assessing chlorophyll.
+    """
     return (i.normalizedDifference(["re2", "re1"])
              .select([0], ["ndvi705"]))
+
+
+def ndi45(i):
+    """NDI45. Delegido 2011. 
+    Frampton 2013 found correlation to crop LAI.
+    """
+    return (i.normalizedDifference(["re1", "red"])
+             .select([0], ["ndi45"]))
     
 
 def mndvi705(i):
+    """ Modified Red Edge Normalized Difference Vegetation Index (Sims et al. 2002)
+    Had high correlation with leaf chlorophyll content.    
+    """
     return (i.expression("(re2 - re1) / (re2 + re1 - (2 * cb))",
                       {'cb':i.select('cb'),
                        're1':i.select('re1'), 
@@ -307,17 +369,9 @@ def mndvi705(i):
                       })
           .select([0], ["mndvi705"]))
     
-
-def ndvig(i):
-    return (i.expression("green * (nir - red) / (nir + red)",
-                      {'green':i.select('green'),
-                       'red':i.select('red'), 
-                       'nir':i.select('nir')
-                      })
-          .select([0], ["ndvig"]))
-    
     
 def tcari1(i):
+    # TCARI (Haboudane et al. 2002)
     return (i.expression("3 * ((re1 - red) - 0.2 * (re1 - green) * (re1 / red))",
                       {'green':i.select('green'),
                        'red':i.select('red'), 
@@ -327,6 +381,8 @@ def tcari1(i):
     
     
 def tcari2(i):
+    # TCARI2 (Wu et al. 2008)
+    # Korhonen 2017 found it highly correlated with canopy cover.
     return (i.expression("3 * ((re2 - re1) - 0.2 * (re2 - green) * (re2 / re1))",
                       {'green':i.select('green'),
                        're1':i.select('re1'), 
@@ -334,34 +390,64 @@ def tcari2(i):
                       })
           .select([0], ["tcari2"]))
 
-
-#def sentinel2_rename_bands(image):
-#    # Function for rename the bands of TM, ETM+, and OLI to aid
-#    # easy interpretation and calculation of spectral indices
-#    band_dicts = ee.Dictionary({
-#    'LANDSAT_8': {'B1':'coastal', 'B2':'blue', 'B3':'green', 'B4':'red', 'B5':'nir', 'B6':'swir1', 'B7':'swir2'},
-#    'LANDSAT_7': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'},
-#    'LANDSAT_5': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'},
-#    'LANDSAT_4': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 'B5':'swir1', 'B7':'swir2'}
-#    })
-#    band_dict = ee.Dictionary(band_dicts.get(image.get('satellite')))
-#
-#    def swap_name(b):
-#        return ee.Algorithms.If(band_dict.contains(b), band_dict.get(b), b)
-#  
-#    new_bands = image.bandNames().map(swap_name)
-#    return image.rename(new_bands)
+def ireci(i):
+    """ IRECI (Guyot and Baret, 1988). 
+    Frampton 2013 found strong correlation with crop LAI for S2.
+    """
+    return (i.expression("(re3 - red)/(re1 / re2)",
+                      {'re1':i.select('re1'),
+                       're2':i.select('re2'),
+                       're3':i.select('re3'),
+                       'red':i.select('red')
+                      })
+          .select([0], ["ireci"]))
 
 
-def sentinel2_spectral_indices(image, ixlist):
-    """ Get landsat spectral indices
+def cri1(i):
+    """
+    Carotenoid Reflectance Index 1 (Gitelson 2002).  
+    Hill 2013 RSE found it discriminated treed landscape from others in texas savannahs
+    """
+    return (i.expression("(1 / blue) - (1 / green)",
+                      {'green':i.select('green'),
+                       'blue':i.select('blue')
+                      })
+          .select([0], ["cri1"]))
+
+
+def ari1(i):
+    """
+    Carotenoid Reflectance Index 1 (Gitelson 2002).  
+    Hill 2013 RSE found it discriminated treed landscape from others in texas savannahs
+    """
+    return (i.expression("(1 / green) - (1 / re1)",
+                      {'green':i.select('green'),
+                       're1':i.select('re1')
+                      })
+          .select([0], ["ari1"]))
+
+
+def satvi(i, L=0.5):
+    """
+    Soil Adjusted Total Vegetation Index (Marsett et al. 2006)
+    Hill 2013 RSE adapted it for S2 and found it corresponded to a gradient of increasing tree cover.
+    """
+    return (i.expression("((swir1 - red) / (swir1 + red + L)) * (1 + L) - (swir2 / 2)",
+                    {'swir1':i.select('swir1'),
+                     'red':i.select('red'),
+                     'swir2':i.select('swir2'),
+                     'L':L
+                      })
+          .select([0], ["satvi"]))
+
+
+def specixs(image, ixlist='all'):
+    """ Get Sentinel-2 spectral indices
 
     Parameters
     ----------
     image: ee.Image
-        Landsat 5-8 image with bands labeled by color rather than band number.
-        An image collection with landsat bands relabeled can be obtained from
-        the "get_landsat_sr_collection" script.
+        Sentinel-2 image with bands labeled by color rather than band number with rename_img.
 
     indices: ee.List
         List of desired band indices to return in a new image.
@@ -380,22 +466,28 @@ def sentinel2_spectral_indices(image, ixlist):
 
     # check if bands were already renamed, and if not then rename them
 #    image = landsat_rename_bands(image)
-
-    ixbands = ee.Dictionary({"ndvi" : ndvi(image),
+    ixbands = ee.Dictionary({"sri" : sri(image),
+                             "ndvi" : ndvi(image),
                              "evi" : evi(image),
                              "savi" : savi(image),
                              "msavi" : msavi(image),
                              "ndmi" : ndmi(image),
                              "nbr" : nbr(image),
                              "nbr2" : nbr2(image),
-                             "re_ndvi" : re_ndvi(image),
-                             "re_pos" : re_pos(image),
+                             "s2rep": s2rep(image),
+                             "ndi45": ndi45(image),
                              "ndvi705" : ndvi705(image),
                              "mndvi705" : mndvi705(image),
-                             "ndvig" : ndvig(image),
                              "tcari1" : tcari1(image),
-                             "tcari2" : tcari2(image)
+                             "tcari2" : tcari2(image),
+                             "ireci" : ireci(image),
+                             "cri1" : cri1(image),
+                             "ari1" : ari1(image),
+                             "satvi" : satvi(image)
                             })
+    
+    if ixlist=='all':
+        ixlist = ixbands.keys()
     
     ixbands = ixbands.values(ixlist)
 
