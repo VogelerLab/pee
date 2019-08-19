@@ -32,7 +32,8 @@ def rename_bands(img):
         QA20                    20 METERS               Always empty
         QA60                    60 METERS               Cloud mask
         """
-    rename_dict = {'B1':'cb',
+    rename_dict = ee.Dictionary(
+                  {'B1':'cb',
                    'B2':'blue',
                    'B3':'green',
                    'B4':'red',
@@ -44,15 +45,46 @@ def rename_bands(img):
                    'B9':'waterVapor',
                    'B10':'cirrus',
                    'B11':'swir1',
-                   'B12':'swir2'}
-    return img.select(list(rename_dict.keys()), list(rename_dict.values()))
+                   'B12':'swir2',
+                   'QA60':'qa60',
+                   'AOT':'aot',
+                   'WVP':'wvp',
+                   'SCL':'scl',
+                   'MSK_CLDPRB':'msk_cldprb',
+                   'MSK_SNWPRB':'msk_snwprb'})
+    bands = img.bandNames()
+    newbands = rename_dict.values(bands)
+    return img.select(bands, newbands)
 
 
 def prep_l1c_img(img):
-    """Rename and rescale all bands to reflectance"""
+    """Rename and rescale all bands to TOA reflectance"""
     t = rename_bands(img).multiply(0.0001) # Rescale to 0-1
     out = t.copyProperties(img).copyProperties(img,['system:time_start']).set('date', img.date().format('YYYY-MM-dd'))
     return out
+
+def prep_l2a_img(img):
+    """Rename and rescale all (available) bands to surface reflectance"""
+    img = rename_bands(img)
+    
+    optbands = ['cb', 'blue', 'green', 'red', 're1', 're2', 're3', 'nir', 're4', 'waterVapor', 'cirrus', 'swir1', 'swir2']
+    optbands = img.bandNames().filter(ee.Filter.inList('item', optbands))
+    opt = img.select(optbands).multiply(0.0001)
+    
+    atmbands = ['aot', 'wvp']
+    atmbands = img.bandNames().filter(ee.Filter.inList('item', atmbands))
+    atm = img.select(atmbands).multiply(0.001)
+    
+    qabands = ['qa60', 'scl', 'msk_cldprb', 'msk_snwprb']
+    qabands = img.bandNames().filter(ee.Filter.inList('item', qabands))
+    qa = img.select(qabands)
+    
+    t = ee.Image([opt, atm, qa])
+    out = (t.copyProperties(img)
+            .copyProperties(img,['system:time_start', 'system:time_end', 'system:footprint'])
+            .set('date', img.date().format('YYYY-MM-dd')))
+    return out
+    
 
 #--------------- Cloud Masking ----------------------------------------------#
 
@@ -441,7 +473,7 @@ def satvi(i, L=0.5):
           .select([0], ["satvi"]))
 
 
-def specixs(image, ixlist='all'):
+def specixs(image, ixlist='all', exclude=None):
     """ Get Sentinel-2 spectral indices
 
     Parameters
@@ -464,8 +496,6 @@ def specixs(image, ixlist='all'):
     Date Modified: 2017-06-19
     """
 
-    # check if bands were already renamed, and if not then rename them
-#    image = landsat_rename_bands(image)
     ixbands = ee.Dictionary({"sri" : sri(image),
                              "ndvi" : ndvi(image),
                              "evi" : evi(image),
@@ -477,7 +507,7 @@ def specixs(image, ixlist='all'):
                              "s2rep": s2rep(image),
                              "ndi45": ndi45(image),
                              "ndvi705" : ndvi705(image),
-                             "mndvi705" : mndvi705(image),
+#                              "mndvi705" : mndvi705(image),
                              "tcari1" : tcari1(image),
                              "tcari2" : tcari2(image),
                              "ireci" : ireci(image),
@@ -488,6 +518,9 @@ def specixs(image, ixlist='all'):
     
     if ixlist=='all':
         ixlist = ixbands.keys()
+        
+    if exclude:
+        ixlist = ixlist.removeAll(exclude)
     
     ixbands = ixbands.values(ixlist)
 
