@@ -143,6 +143,9 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian,
 # TODO: TSAVI (Baret 1989), TVI (Mcdaniel and Haas 1982), GCVI (Gitelson 2003) - used for crops; 
 
 def sri(i):
+    """
+    Simple Ratio Index (Jordan 1969: https://doi.org/10.2307/1936256)
+    """
     return (i.expression("nir / red", 
                         {'nir' : i.select('nir'),
                          'red' : i.select('red')
@@ -151,11 +154,17 @@ def sri(i):
 
 
 def ndvi(i):
+    """
+    Normalized Difference Vegetation Index (Rouse et al, 1974)
+    """
     return (i.normalizedDifference(["nir", "red"])
              .select([0], ["ndvi"]))
 
 
 def evi(i):
+    """
+    Enhanced Vegetation Index (Liu and Huete, 1995)
+    """
     return (i.expression("2.5* ((nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.))",
                       {'nir':i.select('nir'),
                        'red':i.select('red'),
@@ -165,6 +174,9 @@ def evi(i):
 
 
 def savi(i, L=0.5):
+    """
+    Soil Adjusted Vegetation Index (Huete 1988)
+    """
     return (i.expression("((nir - red) / (nir + red + L)) * (1 + L)",
                       {'nir':i.select('nir'),
                        'red':i.select('red'),
@@ -174,6 +186,9 @@ def savi(i, L=0.5):
 
 
 def msavi(i):
+    """
+    Modified Soil Adjusted Vegetation Index (Qi et al., 1994)
+    """
     return (i.expression("(2. * nir + 1. - ((2. * nir + 1.)**2 - 8. * (nir - red))**0.5) / 2.",
                       {'nir':i.select('nir'),
                        'red':i.select('red')
@@ -182,16 +197,26 @@ def msavi(i):
 
 
 def ndmi(i):
+    """
+    Normalized Difference Moisture Index (Gao 1996)
+    """
     return (i.normalizedDifference(["nir", "swir1"])
            .select([0], ["ndmi"]))
 
 
 def nbr(i):
+    """
+    Normalized Burn Ratio (Key and Benson 2006)
+    """
     return (i.normalizedDifference(["nir", "swir2"])
            .select([0], ["nbr"]))
 
 
 def nbr2(i):
+    """
+    Normalized Burn Ratio 2 (Product Guide: Landsat Surface Reflectance-Derived Spectral Indices; 3.6 Version; USGS)
+    I can't find a basis in the scientific literature.
+    """
     return (i.normalizedDifference(["swir1", "swir2"])
           .select([0], ["nbr2"]))
 
