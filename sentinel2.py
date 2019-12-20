@@ -308,6 +308,9 @@ def s2_bustclouds_tdom(imgs):
 #------------- Sentinel-2 spectral index functions ----------------------------
 
 def sri(i):
+    """
+    Simple Ratio Index (Jordan 1969: https://doi.org/10.2307/1936256)
+    """
     return (i.expression("nir / red", 
                         {'nir' : i.select('nir'),
                          'red' : i.select('red')
@@ -315,11 +318,17 @@ def sri(i):
             .select([0], ['sri']))
 
 def ndvi(i):
+    """
+    Normalized Difference Vegetation Index (Rouse et al, 1974)
+    """
     return (i.normalizedDifference(["nir", "red"])
              .select([0], ["ndvi"]))
 
 
 def evi(i):
+    """
+    Enhanced Vegetation Index (Liu and Huete, 1995)
+    """
     return (i.expression("2.5* ((nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.))",
                       {'nir':i.select('nir'),
                        'red':i.select('red'),
@@ -329,6 +338,9 @@ def evi(i):
 
 
 def savi(i, L=0.5):
+    """
+    Soil Adjusted Vegetation Index (Huete 1988)
+    """
     return (i.expression("((nir - red) / (nir + red + L)) * (1 + L)",
                       {'nir':i.select('nir'),
                        'red':i.select('red'),
@@ -338,6 +350,9 @@ def savi(i, L=0.5):
 
 
 def msavi(i):
+    """
+    Modified Soil Adjusted Vegetation Index (Qi et al., 1994)
+    """
     return (i.expression("(2. * nir + 1. - ((2. * nir + 1.)**2 - 8. * (nir - red))**0.5) / 2.",
                       {'nir':i.select('nir'),
                        'red':i.select('red')
@@ -345,24 +360,60 @@ def msavi(i):
            .select([0], ["msavi"]))
 
 
+def satvi(i, L=0.5):
+    """
+    Soil Adjusted Total Vegetation Index (Marsett et al. 2006)
+    Hill 2013 RSE adapted it for S2 and found it corresponded to a gradient of increasing tree cover.
+    """
+    return (i.expression("((swir1 - red) / (swir1 + red + L)) * (1 + L) - (swir2 / 2)",
+                    {'swir1':i.select('swir1'),
+                     'red':i.select('red'),
+                     'swir2':i.select('swir2'),
+                     'L':L
+                      })
+          .select([0], ["satvi"]))
+
+
 def ndmi(i):
+    """
+    Normalized Difference Moisture Index (Gao 1996)
+    """
     return (i.normalizedDifference(["nir", "swir1"])
            .select([0], ["ndmi"]))
 
 
 def nbr(i):
+    """
+    Normalized Burn Ratio (Key and Benson 2006)
+    """
     return (i.normalizedDifference(["nir", "swir2"])
            .select([0], ["nbr"]))
 
 
 def nbr2(i):
+    """
+    Normalized Burn Ratio 2 (Product Guide: Landsat Surface Reflectance-Derived Spectral Indices; 3.6 Version; USGS)
+    I can't find a basis in the scientific literature.
+    """
     return (i.normalizedDifference(["swir1", "swir2"])
           .select([0], ["nbr2"]))
+
+
+def cri1(i):
+    """
+    Carotenoid Reflectance Index 1 (Gitelson et al 2002).  
+    Hill 2013 RSE found it discriminated treed landscape from others in texas savannahs
+    """
+    return (i.expression("(1 / blue) - (1 / green)",
+                      {'green':i.select('green'),
+                       'blue':i.select('blue')
+                      })
+          .select([0], ["cri1"]))
 
 # --- Red-edge indices---# 
     
 def s2rep(i):
-    """ Red-edge Position Index (Guyot and Baret 1988)
+    """ Red-edge Position Index (Frampton et al. 2013; https://doi.org/10.1016/j.isprsjprs.2013.04.007)
     Indicator of crop N and growth status
     """
     return (i.expression(".705 + 0.035 * (0.5 * (re3 + red) - re1) / (re2 - re1)",
@@ -403,7 +454,7 @@ def mndvi705(i):
     
     
 def tcari1(i):
-    # TCARI (Haboudane et al. 2002)
+    # Transformed Chlorophyll Absorption in Reflectance Index (Haboudane et al. 2002)
     return (i.expression("3 * ((re1 - red) - 0.2 * (re1 - green) * (re1 / red))",
                       {'green':i.select('green'),
                        'red':i.select('red'), 
@@ -423,7 +474,7 @@ def tcari2(i):
           .select([0], ["tcari2"]))
 
 def ireci(i):
-    """ IRECI (Guyot and Baret, 1988). 
+    """Inverted Red-Edge Chlorophyll Index (Frampton et al. 2013; https://doi.org/10.1016/j.isprsjprs.2013.04.007). 
     Frampton 2013 found strong correlation with crop LAI for S2.
     """
     return (i.expression("(re3 - red)/(re1 / re2)",
@@ -435,21 +486,9 @@ def ireci(i):
           .select([0], ["ireci"]))
 
 
-def cri1(i):
-    """
-    Carotenoid Reflectance Index 1 (Gitelson 2002).  
-    Hill 2013 RSE found it discriminated treed landscape from others in texas savannahs
-    """
-    return (i.expression("(1 / blue) - (1 / green)",
-                      {'green':i.select('green'),
-                       'blue':i.select('blue')
-                      })
-          .select([0], ["cri1"]))
-
-
 def ari1(i):
     """
-    Carotenoid Reflectance Index 1 (Gitelson 2002).  
+    Anthocyanin Reflectance Index (Gitelson et al 2001).  
     Hill 2013 RSE found it discriminated treed landscape from others in texas savannahs
     """
     return (i.expression("(1 / green) - (1 / re1)",
@@ -457,20 +496,6 @@ def ari1(i):
                        're1':i.select('re1')
                       })
           .select([0], ["ari1"]))
-
-
-def satvi(i, L=0.5):
-    """
-    Soil Adjusted Total Vegetation Index (Marsett et al. 2006)
-    Hill 2013 RSE adapted it for S2 and found it corresponded to a gradient of increasing tree cover.
-    """
-    return (i.expression("((swir1 - red) / (swir1 + red + L)) * (1 + L) - (swir2 / 2)",
-                    {'swir1':i.select('swir1'),
-                     'red':i.select('red'),
-                     'swir2':i.select('swir2'),
-                     'L':L
-                      })
-          .select([0], ["satvi"]))
 
 
 def specixs(image, ixlist='all', exclude=None):
@@ -501,9 +526,11 @@ def specixs(image, ixlist='all', exclude=None):
                              "evi" : evi(image),
                              "savi" : savi(image),
                              "msavi" : msavi(image),
+                             "satvi" : satvi(image),
                              "ndmi" : ndmi(image),
                              "nbr" : nbr(image),
                              "nbr2" : nbr2(image),
+                             "cri1" : cri1(image),
                              "s2rep": s2rep(image),
                              "ndi45": ndi45(image),
                              "ndvi705" : ndvi705(image),
@@ -511,9 +538,7 @@ def specixs(image, ixlist='all', exclude=None):
                              "tcari1" : tcari1(image),
                              "tcari2" : tcari2(image),
                              "ireci" : ireci(image),
-                             "cri1" : cri1(image),
-                             "ari1" : ari1(image),
-                             "satvi" : satvi(image)
+                             "ari1" : ari1(image)
                             })
     
     if ixlist=='all':
