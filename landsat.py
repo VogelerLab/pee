@@ -144,7 +144,7 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian,
 
 def sri(i):
     """
-    Simple Ratio Index (Jordan 1969: https://doi.org/10.2307/1936256)
+    Simple Ratio Index (Jordan 1969): https://doi.org/10.2307/1936256
     """
     return (i.expression("nir / red", 
                         {'nir' : i.select('nir'),
@@ -155,7 +155,7 @@ def sri(i):
 
 def ndvi(i):
     """
-    Normalized Difference Vegetation Index (Rouse et al, 1974)
+    Normalized Difference Vegetation Index (Rouse et al, 1974) Monitoring vegetation systems in the Great Plains with ERTS, in: Proceedings. Presented at the 3rd Earth Resource Technology Satellite (ERTS) Symposium, pp. 48–62
     """
     return (i.normalizedDifference(["nir", "red"])
              .select([0], ["ndvi"]))
@@ -163,7 +163,7 @@ def ndvi(i):
 
 def evi(i):
     """
-    Enhanced Vegetation Index (Liu and Huete, 1995)
+    Enhanced Vegetation Index (Liu and Huete, 1995) https://doi.org/10.1109/TGRS.1995.8746027
     """
     return (i.expression("2.5* ((nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.))",
                       {'nir':i.select('nir'),
@@ -175,7 +175,7 @@ def evi(i):
 
 def savi(i, L=0.5):
     """
-    Soil Adjusted Vegetation Index (Huete 1988)
+    Soil Adjusted Vegetation Index (Huete 1988) https://doi.org/10.1016/0034-4257(88)90106-X
     """
     return (i.expression("((nir - red) / (nir + red + L)) * (1 + L)",
                       {'nir':i.select('nir'),
@@ -187,7 +187,7 @@ def savi(i, L=0.5):
 
 def msavi(i):
     """
-    Modified Soil Adjusted Vegetation Index (Qi et al., 1994)
+    Modified Soil Adjusted Vegetation Index (Qi et al., 1994) https://doi.org/10.1016/0034-4257(94)90134-1
     """
     return (i.expression("(2. * nir + 1. - ((2. * nir + 1.)**2 - 8. * (nir - red))**0.5) / 2.",
                       {'nir':i.select('nir'),
@@ -198,7 +198,7 @@ def msavi(i):
 
 def ndmi(i):
     """
-    Normalized Difference Moisture Index (Gao 1996)
+    Normalized Difference Moisture Index (Gao 1996) https://doi.org/10.1016/S0034-4257(96)00067-3
     """
     return (i.normalizedDifference(["nir", "swir1"])
            .select([0], ["ndmi"]))
@@ -206,7 +206,7 @@ def ndmi(i):
 
 def nbr(i):
     """
-    Normalized Burn Ratio (Key and Benson 2006)
+    Normalized Burn Ratio (Key and Benson 2006)  No. RMRS-GTR-164-CD
     """
     return (i.normalizedDifference(["nir", "swir2"])
            .select([0], ["nbr"]))
@@ -223,7 +223,7 @@ def nbr2(i):
 
 def cri1(i):
     """
-    Carotenoid Reflectance Index 1 (Gitelson 2002).  
+    Carotenoid Reflectance Index 1 (Gitelson 2002). https://doi.org/10.1016/S0034-4257(01)00289-9 
     Hill 2013 RSE found it discriminated treed landscape from others in texas savannahs
     """
     return (i.expression("(1 / blue) - (1 / green)",
@@ -235,7 +235,7 @@ def cri1(i):
 
 def satvi(i, L=0.5):
     """
-    Soil Adjusted Total Vegetation Index (Marsett et al. 2006)
+    Soil Adjusted Total Vegetation Index (Marsett et al. 2006) https://doi.org/10.2111/05-201R.1
     Hill 2013 RSE adapted it for S2 and found it corresponded to a gradient of increasing tree cover.
     """
     return (i.expression("((swir1 - red) / (swir1 + red + L)) * (1 + L) - (swir2 / 2)",
