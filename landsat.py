@@ -140,7 +140,7 @@ def get_landsat_collection(studyArea, startDate, endDate, startJulian,
 
 ###############################################################################
 #-------------Landsat spectral index functions --------------------------------
-# TODO: TSAVI (Baret 1989), TVI (Mcdaniel and Haas 1982), GCVI (Gitelson 2003) - used for crops; 
+# TODO: TSAVI (Baret 1989), TVI (Mcdaniel and Haas 1982), 
 
 def sri(i):
     """
@@ -246,6 +246,16 @@ def satvi(i, L=0.5):
                       })
           .select([0], ["satvi"]))
 
+def gcvi(i):
+    """
+    Green Chlorophyll Vegetation Index (Gitelson et al.,2005) https://doi.org/10.1029/2005GL022688
+    Deines et al. 2019 used for mapping irrigation. Works well in most cropland applications.
+    """
+    return (i.expression("nir / green - 1", 
+                        {'nir' : i.select('nir'),
+                         'green' : i.select('green')
+                        })
+            .select([0], ['gcvi']))
 
 # ---Tasseled cap band coefficients--------
 # TODO: Use Surface Reflectance TCAP (Crist 1985) for SR data
@@ -378,6 +388,7 @@ def specixs(image, ixlist='all'):
              "nbr2":nbr2(image),
              "cri1":cri1(image),
              "satvi":satvi(image),
+             "gcvi":gcvi(image),
              "tasseled_cap":tasseled_cap(image),
              "greenness":greenness(image),
              "wetness":wetness(image),
