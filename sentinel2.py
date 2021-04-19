@@ -46,6 +46,8 @@ def rename_bands(img):
                    'B10':'cirrus',
                    'B11':'swir1',
                    'B12':'swir2',
+                   'QA10':'qa10',
+                   'QA20':'qa20',
                    'QA60':'qa60',
                    'AOT':'aot',
                    'WVP':'wvp',
