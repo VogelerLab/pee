@@ -79,42 +79,6 @@ def sr_rename(img):
     return img.rename(bnames)
 
 
-# def rescale_l8sr(scene):
-#     """ rescale L8 SR back to surface reflectance (0-1)
-#     Author: George Azzari (modified Steven Filippelli)
-#     """    
-#     opt = scene.select(['cb', 'blue', 'green', 'red', 'nir', 'swir1', 'swir2'])
-#     therm = scene.select(['therm1', 'therm2'])
-#     masks = scene.select(['sr_aerosol', 'pixel_qa', 'radsat_qa'])
-
-#     opt = opt.multiply(0.0001)
-#     therm = therm.multiply(0.1)
-
-#     scaled = ee.Image(ee.Image.cat([opt, therm, masks]).copyProperties(scene))
-#     scaled = scaled.set('system:time_start', scene.get('system:time_start'))
-
-#     return scaled
-
-
-# def rescale_l57(scene):
-#     """ rescale L5 & L7 SR back to surface reflectance (0-1)
-#     Author: George Azzari (modified Steven Filippelli)
-#     """
-#     opt = scene.select(['blue', 'green', 'red', 'nir', 'swir1', 'swir2'])
-#     atmos = scene.select(['sr_atmos_opacity'])
-#     therm = scene.select(['therm1'])
-#     masks = scene.select(['sr_cloud_qa', 'pixel_qa', 'radsat_qa'])
-
-#     opt = opt.multiply(0.0001)
-#     atmos = atmos.multiply(0.001)
-#     therm = therm.multiply(0.1)
-
-#     scaled = ee.Image(ee.Image.cat([opt, therm, masks, atmos]).copyProperties(scene))
-#     scaled = scaled.set('system:time_start', scene.get('system:time_start'))
-
-#     return scaled
-
-
 def sr_rescale(img):
     """ Rescale Landsat SR images from any satellite.
     """
