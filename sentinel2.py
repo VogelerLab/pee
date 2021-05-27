@@ -160,29 +160,110 @@ def maskS2clouds(image):
     return image.updateMask(mask)
 
 
-def simpleTDOM2(c):
-    """ Cloud shadow masking with TDOM
-  
-    Author: Ian Housman
+def tdom2(imgs, sum_bands=['nir', 'swir1'], zscore_thresh=-1, sum_thresh=0.35,
+         erode_pix=1.5, dilate_pix=3.5, mean_img=None, stddev_img=None,
+         stat_imgs=None
+        ):
+    """ Apply Temporal Dark Outlier Mask (TDOM) to an image or image collection
+    
+    Identify dark outliers for an image(s) using a time series of images or 
+    precomputed mean and standard deviations from a time series. Then mask out
+    the dark outlier pixels. This is most useful for identifying cloud shadows 
+    which may be missed by Fmask when used with nir and swir1 as the sum bands. 
+    If the time series is too short this will tend to have higher 
+    commission/omission error. The pixel-wise mean and standard deviation are
+    taken in order of preference from mean_img & stddev_img > stat_imgs > imgs.
+    
+    Parameters
+    ----------
+    img: ee.Image or ee.ImageCollection
+        Image or images for which to mask out dark outliers. If an image collection,
+        it is used to calculate the mean and standard deviation for outlier
+        detection only if precomputed mean_img & stddev_img or stat_imgs are
+        not provided.
+        
+    sum_bands: list
+        list of bands names to use identifying outliers
+        
+    zscore_thresh: float
+        Number of standard deviations below the mean to consider as low outlier.
+        
+    sum_thresh: float
+        Maximum brightness from sum of sum_bands to consider as a dark pixel.
+        Default of 0.35 is based on use of reflectance rescaled 0-1 with default
+        nir and swir1 bands.
+        
+    erode_pix: float
+        Number of pixels to apply erosion to the detected dark pixels
+    
+    dilate_pix: float
+        Number of pixels of dilation to apply to the mask. Dilation is applied
+        after erosion so a morphological opening is applied to the mask if both 
+        parameters are not zero.
+        
+    mean_img: ee.Image
+        Image with mean of time series for the bands used in outlier detection.
+        Must have the same band names as sum_bands.
+        
+    stddev_img: ee.Image
+        Image with standard deviation of time series for the bands used in
+        outlier detection. Must have the same band names as sum_bands.
+        
+    stat_imgs: ee.ImageCollection
+        Images to use for calculating the pixel-wise means and standard deviations
+        to use in outlier detection. Only used if mean_img and stddev_img not
+        provided.
+        
+        
+    Returns
+    -------
+    ee.image or ee.ImageCollection
+        Collection of images with dark outliers masked out  
+        
+    Authors
+    -------
+    Original concept written by Carson Stam and adapted by Ian Housman.
+    Ported to python and modified by Steven Filippelli.
+        
+    TODO: add error handling for imgs not provided, and other bad params
     """
-    shadowSumBands = ['nir','swir1']
-    irSumThresh = 0.4
-    zShadowThresh = -1.5 # default = -1.2
-    # Get some pixel-wise stats for the time series
-    irStdDev = c.select(shadowSumBands).reduce(ee.Reducer.stdDev())
-    irMean = c.select(shadowSumBands).mean()
-    bandNames = ee.Image(c.first()).bandNames()
-#  print('bandNames',bandNames)
-  # Mask out dark dark outliers
+    
+    # Get mean and stddev of a time series for sum bands
+    if not(mean_img and stddev_img):
+        if stat_imgs:
+            stddev_img = stat_imgs.select(sum_bands).reduce(ee.Reducer.stdDev())
+            mean_img = stat_imgs.select(sum_bands).mean()
+        
+        elif type(imgs) is ee.ImageCollection:
+            stddev_img = imgs.select(sum_bands).reduce(ee.Reducer.stdDev())
+            mean_img = imgs.select(sum_bands).mean()
+        
+        else:
+            # TODO: raise error since stats can't be computed from anything
+            return imgs
+    
+    # function to mask dark outliers for a single image
     def dark_outliers(img):
-        z = img.select(shadowSumBands).subtract(irMean).divide(irStdDev)
-        irSum = img.select(shadowSumBands).reduce(ee.Reducer.sum())
-        m = z.lt(zShadowThresh).reduce(ee.Reducer.sum()).eq(2).And(irSum.lt(irSumThresh)).Not()
-        return img.updateMask(img.mask().And(m))
-
-    c = c.map(dark_outliers)
-
-    return c.select(bandNames)
+        z = img.select(sum_bands).subtract(mean_img).divide(stddev_img)
+        img_sum = img.select(sum_bands).reduce(ee.Reducer.sum())
+        tdom_mask = z.lt(zscore_thresh).reduce(ee.Reducer.sum()).eq(len(sum_bands)).And(img_sum.lt(sum_thresh))
+        
+        # Erosion then dilate is morphological opening if both params not 0
+        # TODO: I think fast distance transform may be faster for erosion & dilation
+        if erode_pix:
+            tdom_mask = tdom_mask.focal_min(erode_pix)
+        if dilate_pix:
+            tdom_mask = tdom_mask.focal_max(dilate_pix)
+        
+        return img.updateMask(tdom_mask.Not())
+    
+    # apply mask to single image or image collection
+    if type(imgs) is ee.ImageCollection:
+        imgs = imgs.map(dark_outliers)
+    else:
+        imgs = dark_outliers(imgs)
+    
+    return imgs
 
 
 def projectShadows(cloudMask,image,cloudHeights):
