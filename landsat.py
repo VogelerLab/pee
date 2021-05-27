@@ -231,8 +231,117 @@ def sr_mask(img, opt_lo=0, opt_hi=10000, edges=True, aerosol=False, **kwargs):
     return mask
 
 
-def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None, sats=["L4", "L5", "L7", "L8"], harmonize=True,
-                  rescale=True, cloud_cover=70, mask_func=sr_mask, slc_on=False, mask_kwargs={}, exclude=None):
+def tdom2(imgs, sum_bands=['nir', 'swir1'], zscore_thresh=-1, sum_thresh=0.35,
+         erode_pix=1.5, dilate_pix=3.5, mean_img=None, stddev_img=None,
+         stat_imgs=None
+        ):
+    """ Apply Temporal Dark Outlier Mask (TDOM) to an image or image collection
+    
+    Identify dark outliers for an image(s) using a time series of images or 
+    precomputed mean and standard deviations from a time series. Then mask out
+    the dark outlier pixels. This is most useful for identifying cloud shadows 
+    which may be missed by Fmask when used with nir and swir1 as the sum bands. 
+    If the time series is too short this will tend to have higher 
+    commission/omission error. The pixel-wise mean and standard deviation are
+    taken in order of preference from mean_img & stddev_img > stat_imgs > imgs.
+    
+    Parameters
+    ----------
+    img: ee.Image or ee.ImageCollection
+        Image or images for which to mask out dark outliers. If an image collection,
+        it is used to calculate the mean and standard deviation for outlier
+        detection only if precomputed mean_img & stddev_img or stat_imgs are
+        not provided.
+        
+    sum_bands: list
+        list of bands names to use identifying outliers
+        
+    zscore_thresh: float
+        Number of standard deviations below the mean to consider as low outlier.
+        
+    sum_thresh: float
+        Maximum brightness from sum of sum_bands to consider as a dark pixel.
+        Default of 0.35 is based on use of reflectance rescaled 0-1 with default
+        nir and swir1 bands.
+        
+    erode_pix: float
+        Number of pixels to apply erosion to the detected dark pixels
+    
+    dilate_pix: float
+        Number of pixels of dilation to apply to the mask. Dilation is applied
+        after erosion so a morphological opening is applied to the mask if both 
+        parameters are not zero.
+        
+    mean_img: ee.Image
+        Image with mean of time series for the bands used in outlier detection.
+        Must have the same band names as sum_bands.
+        
+    stddev_img: ee.Image
+        Image with standard deviation of time series for the bands used in
+        outlier detection. Must have the same band names as sum_bands.
+        
+    stat_imgs: ee.ImageCollection
+        Images to use for calculating the pixel-wise means and standard deviations
+        to use in outlier detection. Only used if mean_img and stddev_img not
+        provided.
+        
+        
+    Returns
+    -------
+    ee.image or ee.ImageCollection
+        Collection of images with dark outliers masked out  
+        
+    Authors
+    -------
+    Original concept written by Carson Stam and adapted by Ian Housman.
+    Ported to python and modified by Steven Filippelli.
+        
+    TODO: add error handling for imgs not provided, and other bad params
+    """
+    
+    # Get mean and stddev of a time series for sum bands
+    if not(mean_img and stddev_img):
+        if stat_imgs:
+            stddev_img = stat_imgs.select(sum_bands).reduce(ee.Reducer.stdDev())
+            mean_img = stat_imgs.select(sum_bands).mean()
+        
+        elif type(imgs) is ee.ImageCollection:
+            stddev_img = imgs.select(sum_bands).reduce(ee.Reducer.stdDev())
+            mean_img = imgs.select(sum_bands).mean()
+        
+        else:
+            # TODO: raise error since stats can't be computed from anything
+            return imgs
+    
+    # function to mask dark outliers for a single image
+    def dark_outliers(img):
+        z = img.select(sum_bands).subtract(mean_img).divide(stddev_img)
+        img_sum = img.select(sum_bands).reduce(ee.Reducer.sum())
+        tdom_mask = z.lt(zscore_thresh).reduce(ee.Reducer.sum()).eq(len(sum_bands)).And(img_sum.lt(sum_thresh))
+        
+        # Erosion then dilate is morphological opening if both params not 0
+        # TODO: I think fast distance transform may be faster for erosion & dilation
+        if erode_pix:
+            tdom_mask = tdom_mask.focal_min(erode_pix)
+        if dilate_pix:
+            tdom_mask = tdom_mask.focal_max(dilate_pix)
+        
+        return img.updateMask(tdom_mask.Not())
+    
+    # apply mask to single image or image collection
+    if type(imgs) is ee.ImageCollection:
+        imgs = imgs.map(dark_outliers)
+    else:
+        imgs = dark_outliers(imgs)
+    
+    return imgs
+
+
+def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None, 
+                  sats=["L4", "L5", "L7", "L8"], harmonize=True,
+                  rescale=True, cloud_cover=70, mask_func=sr_mask, slc_on=False,
+                  tdom=False, exclude=None, mask_kwargs={}, tdom_kwargs={}
+                 ):
     """ Return a Landsat collection with renamed bands and other optional preparations applied.
 
     Get collection of all landsat images that intersect the given feature,
@@ -279,11 +388,17 @@ def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None, sats=["L4
     slc_on: bool
         Keep Landsat 7 images only when SLC is on, January 1998 - May 2003.
         
+    tdom: bool
+        Apply Temporal Dark Outlier Mask to remove cloud shadows
+        
     exclude: list
         List of system:index to exclude from the collection.
         
-    **kwargs:
-        arguments passed to mask_func
+    mask_kwargs: dict
+        keyword arguments passed to mask_func
+        
+    tdom_kwargs: dict
+        keyword arguments passed to tdom
         
     Returns
     -------
@@ -330,6 +445,9 @@ def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None, sats=["L4
             imgs = imgs.map(lambda i: i.updateMask(mask_func(i, **mask_kwargs)))
         if rescale:
             imgs = imgs.map(sr_rescale)  # TODO: try to move rescale below band selection, need to allow for .select on bands that don't exist in the image in sr_rescale
+        if tdom:
+            # tdom should be after rescale otherwise defaults for sum_thresh will need to be changed for typical runs
+            imgs = tdom2(imgs, **tdom_kwargs)
         if bands:
             imgs = imgs.select(bands) 
         
@@ -342,9 +460,10 @@ def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None, sats=["L4
 ###############################################################################
 #-------------Landsat spectral index functions --------------------------------
 # TODO: TSAVI (Baret 1989), TVI (Mcdaniel and Haas 1982), 
-# TODO: Move to separate file.
+# TODO: Move to separate file since most are sensor agnostic, except TCAP.
 # TODO: allow specification of bands instead of requiring certain band names
 # TODO: consider casting all to float
+# TODO: create params for rescaled 0-1 true/false since some depend on rescaled
 
 def sri(i):
     """
@@ -378,7 +497,7 @@ def evi(i):
     """
     Enhanced Vegetation Index (Liu and Huete, 1995) https://doi.org/10.1109/TGRS.1995.8746027
     """
-    return (i.expression("2.5* ((nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.))",
+    return (i.expression("2.5 * ((nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.))",
                       {'nir':i.select('nir'),
                        'red':i.select('red'),
                        'blue':i.select('blue')
@@ -545,7 +664,7 @@ def tasseled_cap(image, sr=True):
     if sr:
         coeffs = ee.List(sr_tc_coeffs)
     else:
-        coeffs = ee.List(tc_coeff_dict.get(image.get('SATELLITE')))
+        coeffs = ee.List(toa_coeff_dict.get(image.get('SATELLITE')))
                   
     # Compute the tc transformation and give it useful names
     tco = coeffs.map(mult_sum)
@@ -585,6 +704,9 @@ def specixs(image, ixlist='all', sr=True):
 
     indices: list
         List of desired band indices to return in a new image.
+        
+    sr: bool
+        Image is surface reflectance
 
      Returns
      -------
