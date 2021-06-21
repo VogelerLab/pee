@@ -10,10 +10,12 @@ Created on Mon Jul 31 15:40:56 2017
 
 # TODO: Get rid of or simplify reduce seasons functions
 
-import ee
+import ee, os, re, rasterio
 # import ee.mapclient
 ee.Initialize()
 import numpy as np
+from glob import glob
+from joblib import Parallel, delayed
 
 
 def appendToBandNames(img, string):
@@ -289,7 +291,157 @@ def lt_fitted(imgs, flip_bands=True, fit_band=None, maxSegments=6, **kwargs):
         imgs_fit = imgs_fit.map(lambda i: lt_flipbands(i, flip_bands=flip_bands))
     
     return imgs_fit
-  
+
+
+def stack_annual(imgs_fit):
+    """ Convert an annual image collection into a single image with bands named 
+    by the year and fit band. This works for image collections with a 'year' 
+    property such as the output from annual_composites or lt_fitted. Exporting 
+    LandTrendr fitted images is much faster when bundled together as a single 
+    output image such as this.
+    
+    imgs_fit: ee.ImageCollection
+        Annual ImageCollection with "year" property
+    
+    returns: ee.Image
+        A single image from stacking the collection with bands renamed as "year_band"
+    
+    TODO: add date band back in with spectral indices using join on system:time_start
+    """
+    
+    imgs_fit = imgs_fit.sort('sytem:time_start')
+    img = imgs_fit.toBands()
+
+    # complicated renaming, but only assumes aggregate_array returns list of properties in order of sorted image collection
+    # TODO: maybe able to simplify with iter combo of range(starty, endy) and "bands", assuming things stay in order
+    fit_ixs = imgs_fit.aggregate_array('system:index')
+    fit_years = imgs_fit.aggregate_array('year')
+    sysix_dict = ee.Dictionary.fromLists(fit_ixs, fit_years)
+    def replace_sysix(s):
+        s = ee.String(s)
+        sysix = s.slice(0, s.rindex('_'))
+        band = s.split('_').get(-1)
+        year = ee.Number(sysix_dict.get(sysix)).format('%04d')
+        return year.cat('_').cat(band)
+
+    oldBands = img.bandNames()
+    newBands = oldBands.map(replace_sysix)
+    img = img.select(oldBands, newBands)
+      
+    return img
+
+
+def split_stack(paths, outdir, basename, temp="{base}_{tile}.tif", nodata=-32768, multi=None, threads=8):
+    """ Split files from stack_annual exports into files organized as {outdir}/{year}/{base}_{tile}.tif
+    with the all spectral bands for a tile and year in a single new image.
+    
+    paths: list
+        List of paths to input files to split into new files
+        
+    outdir: str
+        Output base directory
+        
+    basename: str
+        Output base filename to prepend to the tile number
+        
+    temp: str
+        Filename template for identifying the tile number. If spectral bands are split between
+        multiple files for one tile then include the multi string location (e.g. "{base}_{tile}_{multi}.tif")
+        along with the substrings in the multi list.
+        
+    nodata: int or float
+        Number assigned to masked values prior to export from GEE
+        
+    multi: list
+        List of substrings in the inpaths that indicate split bands for a single tile.
+        For example, ['orig', 'spix'] would look for a single tile that is split between 
+        two files that have the original bands and spectral indices. These will be merged
+        into a single output file after separating out different years.
+        
+    threads: int
+        Number of threads to use in writing output files. Each file is read iteratively with one thread.
+        
+    returns: bool
+        True if completed writing new files successfully
+        
+    TODO: create more flexibility in reorganizing by allowing more variability in the input
+    template (e.g. /{multi}/{base}_{tile}.tif) and an output template (e.g. {tile}/{base}_{year}_{band}.tif)
+    
+    TODO: Try to parallelize file reading. Maybe try using windows.
+    """
+    
+    # convert the simple template to a regex
+    regex = temp.replace('{', '(?P<')
+    regex = regex.replace('}', '>.*)')
+
+    # Get list of tiles
+    tiles = []
+    for path in paths:
+        fname = os.path.basename(path)
+        m = re.match(regex, fname)
+        tiles.append(m.group('tile'))
+    tiles = list(dict.fromkeys(tiles))
+
+
+    # TODO: modify to accept no multi
+    if not multi:
+        multi = [1]
+
+    for tile in tiles:
+        marrs = {}
+        mdescs = {}
+        mbands = {}
+        for m in multi:
+            mregex = temp.replace('{base}', '(.*)').replace('{tile}', tile)
+            if type(m)==str:
+                mregex = mregex.replace('{multi}', m)
+            mpaths = [p for p in paths if re.match(mregex, p)]
+            if len(mpaths) > 1:
+                print('Multiple path matches for template', mregex, '. Skipping.')
+                continue
+            elif len(mpaths)==0:
+                print('No path matches using template', mregex, '. Skipping.')
+                continue
+            else:
+                mpath = mpaths[0]
+            
+            print(mpath)
+            with rasterio.open(mpath) as src:
+                marrs[m] = src.read()
+                mdescs[m] = src.descriptions
+                mbands[m] = list(dict.fromkeys([b.split('_')[1] for b in src.descriptions]))
+                years = list(dict.fromkeys([b.split('_')[0] for b in src.descriptions]))
+                prof = src.profile    
+
+        for year in years:
+            os.makedirs(os.path.join(outdir, str(year)), exist_ok=True)
+
+        bands = list(np.concatenate(list(mbands.values())))
+        prof['count'] = len(bands)
+        prof['nodata'] = nodata
+        prof['interleave'] = 'band'
+
+        def write_year(year):
+            print(tile, year)
+            myarrs = []
+            for m in multi:
+                ixs = [mdescs[m].index(str(year)+"_"+b) for b in mbands[m]]
+                myarrs.append(marrs[m][ixs])
+            yarr = np.concatenate(myarrs)
+            del myarrs
+
+            # export tile for year
+            yr_dir = os.path.join(outdir, str(year))
+            yr_path = os.path.join(outdir, str(year), basename+"_"+tile+"_"+str(year)+".tif")
+            with rasterio.open(yr_path, 'w', **prof) as dst:
+                dst.write(yarr)
+                dst.descriptions = bands
+            del yarr
+
+        Parallel(n_jobs=threads)(delayed(write_year)(year) for year in years)
+    
+    return True
+
 
 def annual_composites(aoi, starty, endy, startdoy, enddoy, coll_func, comp_func,
                       coll_kwargs={}, comp_kwargs={}, fill=False):
