@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*- 
 # Functions for preparing Landsat data in GEE. 
 
+# There are a few more sophisticated public libraries that may be worth using instead:
+# https://github.com/fitoprincipe/geedatasets
+# https://github.com/george-azzari/eetc/tree/master/gee_tools/datasources
+
 # TODO: Add function to get a scene's snow and cloud cover from pqa band (see redcedar_landtrendr_v4)
 
 import numpy as np
@@ -9,42 +13,32 @@ import time_series
 ee.Initialize()
 
 
-__sr_dict = {
-    'LANDSAT_4':{'id':'LANDSAT/LT04/C02/T1_L2',
-                 'opt':['blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
-                 'st_other':['ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD'],
-                 'atmos':['SR_ATMOS_OPACITY'],
-                 'qa':['SR_CLOUD_QA', 'QA_PIXEL', 'QA_RADSAT'],
-                 'orig':['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7', 'SR_ATMOS_OPACITY', 'SR_CLOUD_QA', 'ST_B6', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT'],
-                 'all':['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'SR_ATMOS_OPACITY', 'SR_CLOUD_QA', 'st', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT']
+__srbands = ee.Dictionary({
+    'LANDSAT_4':{'opt':['blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
+                 'therm':['therm1'],
+                 'atmos':['sr_atmos_opacity'],
+                 'qa':['sr_cloud_qa', 'pixel_qa', 'radsat_qa'],
+                 'all':['blue', 'green', 'red', 'nir', 'swir1','therm1', 'swir2', 'sr_atmos_opacity', 'sr_cloud_qa', 'pixel_qa', 'radsat_qa']
                 },
-    'LANDSAT_5':{'id':'LANDSAT/LT05/C02/T1_L2',
-                 'opt':['blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
-                 'st_other':['ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD'],
-                 'atmos':['SR_ATMOS_OPACITY'],
-                 'qa':['SR_CLOUD_QA', 'QA_PIXEL', 'QA_RADSAT'],
-                 'orig':['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7', 'SR_ATMOS_OPACITY', 'SR_CLOUD_QA', 'ST_B6', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT'],
-                 'all':['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'SR_ATMOS_OPACITY', 'SR_CLOUD_QA', 'st', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT']
+    'LANDSAT_5':{'opt':['blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
+                 'therm':['therm1'],
+                 'atmos':['sr_atmos_opacity'],
+                 'qa':['sr_cloud_qa', 'pixel_qa', 'radsat_qa'],
+                 'all':['blue', 'green', 'red', 'nir', 'swir1','therm1', 'swir2', 'sr_atmos_opacity', 'sr_cloud_qa', 'pixel_qa', 'radsat_qa']
                 },
-    'LANDSAT_7':{'id':'LANDSAT/LE07/C02/T1_L2',
-                 'opt':['blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
-                 'st_other':['ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD'],
-                 'atmos':['SR_ATMOS_OPACITY'],
-                 'qa':['SR_CLOUD_QA', 'QA_PIXEL', 'QA_RADSAT'],
-                 'orig':['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7', 'SR_ATMOS_OPACITY', 'SR_CLOUD_QA', 'ST_B6', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT'],
-                 'all':['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'SR_ATMOS_OPACITY', 'SR_CLOUD_QA', 'st', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT']
+    'LANDSAT_7':{'opt':['blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
+                 'therm':['therm1'],
+                 'atmos':['sr_atmos_opacity'],
+                 'qa':['sr_cloud_qa', 'pixel_qa', 'radsat_qa'],
+                 'all':['blue', 'green', 'red', 'nir', 'swir1','therm1', 'swir2', 'sr_atmos_opacity', 'sr_cloud_qa', 'pixel_qa', 'radsat_qa']
                 },
-    'LANDSAT_8':{'id':'LANDSAT/LC08/C02/T1_L2',
-                 'opt':['cb','blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
-                 'st_other':['ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD'],
+    'LANDSAT_8':{'opt':['cb','blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
+                 'therm':['therm1', 'therm2'],
                  'atmos':[],
-                 'qa':['SR_QA_AEROSOL', 'QA_PIXEL', 'QA_RADSAT'],
-                 'orig':['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7', 'SR_QA_AEROSOL', 'ST_B10', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT'],
-                 'all':['cb', 'blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'SR_QA_AEROSOL', 'st', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT']
+                 'qa':['sr_aerosol', 'pixel_qa', 'radsat_qa'],
+                 'all':['cb', 'blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'therm1', 'therm2', 'sr_aerosol', 'pixel_qa', 'radsat_qa']
                 }   
-    }
-__sr_eedict = ee.Dictionary(__sr_dict)
-
+    })
 
 __atmos_scale = ee.Dictionary({
     'LANDSAT_4':ee.Image(0.001),
@@ -59,16 +53,16 @@ def swap_bandnames(image):
        band order.
     """
     band_dicts = ee.Dictionary({
-    'LANDSAT_8': {'SR_B1':'cb', 'SR_B2':'blue', 'SR_B3':'green', 'SR_B4':'red', 'SR_B5':'nir', 
-                  'SR_B6':'swir1', 'SR_B7':'swir2', 'ST_B10':'st'},
-    'LANDSAT_7': {'SR_B1':'blue', 'SR_B2':'green', 'SR_B3':'red', 'SR_B4':'nir', 
-                  'SR_B5':'swir1', 'SR_B7':'swir2', 'ST_B6':'st'},
-    'LANDSAT_5': {'SR_B1':'blue', 'SR_B2':'green', 'SR_B3':'red', 'SR_B4':'nir', 
-                  'SR_B5':'swir1', 'SR_B7':'swir2', 'ST_B6':'st'},
-    'LANDSAT_4': {'SR_B1':'blue', 'SR_B2':'green', 'SR_B3':'red', 'SR_B4':'nir', 
-                  'SR_B5':'swir1', 'SR_B7':'swir2', 'ST_B6':'st'}
+    'LANDSAT_8': {'B1':'cb', 'B2':'blue', 'B3':'green', 'B4':'red', 'B5':'nir', 
+                  'B6':'swir1', 'B7':'swir2', 'B10':'therm1', 'B11':'therm2'},
+    'LANDSAT_7': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 
+                  'B5':'swir1', 'B7':'swir2'},
+    'LANDSAT_5': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 
+                  'B5':'swir1', 'B7':'swir2'},
+    'LANDSAT_4': {'B1':'blue', 'B2':'green', 'B3':'red', 'B4':'nir', 
+                  'B5':'swir1', 'B7':'swir2'}
     })
-    band_dict = ee.Dictionary(band_dicts.get(image.get('SPACECRAFT_ID')))
+    band_dict = ee.Dictionary(band_dicts.get(image.get('SATELLITE')))
 
     def swap_name(b):
         # TODO: try to use filter instead of if
@@ -79,118 +73,109 @@ def swap_bandnames(image):
 
 
 def sr_rename(img):
-    """ Rename bands based on SPACECRAFT_ID, assuming all bands present in original order.
+    """ Rename bands based on satellite, assuming all bands present in original order.
     """
-    bnames = ee.Dictionary(__sr_eedict.get(img.get('SPACECRAFT_ID'))).get('all')
+    bnames = ee.Dictionary(__srbands.get(img.get('SATELLITE'))).get('all')
     return img.rename(bnames)
 
 
 def sr_rescale(img):
-    """ Rescale Landsat SR images from any satellite. Ancillary surface temperature bands are not scaled.
-    
-    TODO: Add option to scale other ST bands - unlikely to use these, so unneccessary compute time for most cases; other fix would be to apply scale only to present bands and perform select beforehand.
+    """ Rescale Landsat SR images from any satellite.
     """
-    sat = img.get('SPACECRAFT_ID')
-    bdict = ee.Dictionary(__sr_eedict.get(sat))
+    sat = img.get('SATELLITE')
+    bdict = ee.Dictionary(__srbands.get(sat))
     opt = img.select(bdict.get('opt'))
-    therm = img.select(['st'])
+    therm = img.select(bdict.get('therm'))
     atmos = img.select(bdict.get('atmos'))
     qa = img.select(bdict.get('qa'))
-    st_other = img.select(bdict.get('st_other'))
     
     # scale and cast to float (may reduce memory bottlenecks?)
-    opt = opt.multiply(0.0000275).add(-0.2).toFloat()
+    opt = opt.multiply(0.0001).toFloat()
     atmos = atmos.multiply(__atmos_scale.get(sat)).toFloat() #0.001 for L57, empty for L8
-    therm = therm.multiply(0.00341802).add(149.0).toFloat()
+    therm = therm.multiply(0.1).toFloat()
 
-    scaled = ee.Image(ee.Image.cat([opt, therm, qa, atmos, st_other])).copyProperties(img)
+    scaled = ee.Image(ee.Image.cat([opt, therm, qa, atmos])).copyProperties(img)
     scaled = scaled.set('system:time_start', img.get('system:time_start'))
     return scaled
 
-# TODO: Need to check coefficients and update to use reflectance 0-1, but this function likely no longer necessary anyway.
-# def l8sr_harmonize(img):
-#     """Harmonize L8 to L5/7 following Roy 2016 for surface reflectance images.
-#        Expects images in the original scale (i.e.0-10000) with all renamed bands.
-#        This correction likely makes differences worse for Collection 2: https://groups.google.com/g/google-earth-engine-developers/c/mx5LmM9SI2g/m/nsg7fqv5AQAJ
-#     """
-#     # RMA slopes and intercepts per band
-#     slopes = ee.Image.constant([0.9785, 0.9542, 0.9825, 1.0073, 1.0171, 0.9949])
-# #     itcp_coefs = [-0.0095, -0.0016, -0.0022, -0.0021, -0.0030, 0.0029] # img scaled 0-1
-#     itcp_coefs = [-95.0, -16.0, -22.0, -21.0, -30.0,  29.0] # img scaled 0-10,000
-#     itcp = ee.Image.constant(itcp_coefs)
-# #     # Least squares slopes and intercepts per band
-# #     slopes = ee.Image.constant([0.885, 0.9317, 0.9372, 0.8339, 0.8639, 0.9165])
-# #     itcp = ee.Image.constant([0.0183, 0.0123, 0.0123, 0.0448, 0.0306, 0.0116])
 
-#     # apply reverse of regression (Roy gives ETM to OLI)
-#     y = (img.select(['blue', 'green', 'red', 'nir', 'swir1', 'swir2'])
-#             .subtract(itcp).divide(slopes)
-#             .toInt16()
-#         )
-#     new = ee.Image.cat([img.select(['cb']),
-#                         y,
-#                         img.select('st', 'sr_aerosol', 'QA_PIXEL', 'QA_RADSAT')])
+def l8sr_harmonize(img):
+    """Harmonize L8 to L5/7 following Roy 20?? for surface reflectance images
+       Expects images in the original scale (i.e.0-10000) with all renamed bands
+    """
+    # RMA slopes and intercepts per band
+    slopes = ee.Image.constant([0.9785, 0.9542, 0.9825, 1.0073, 1.0171, 0.9949])
+#     itcp_coefs = [-0.0095, -0.0016, -0.0022, -0.0021, -0.0030, 0.0029] # img scaled 0-1
+    itcp_coefs = [-95.0, -16.0, -22.0, -21.0, -30.0,  29.0] # img scaled 0-10,000
+    itcp = ee.Image.constant(itcp_coefs)
+#     # Least squares slopes and intercepts per band
+#     slopes = ee.Image.constant([0.885, 0.9317, 0.9372, 0.8339, 0.8639, 0.9165])
+#     itcp = ee.Image.constant([0.0183, 0.0123, 0.0123, 0.0448, 0.0306, 0.0116])
+
+    # apply reverse of regression (Roy gives ETM to OLI)
+    y = (img.select(['blue', 'green', 'red', 'nir', 'swir1', 'swir2'])
+            .subtract(itcp).divide(slopes)
+            .toInt16()
+        )
+    new = ee.Image.cat([img.select(['cb']),
+                        y,
+                        img.select('therm1', 'therm2', 'sr_aerosol', 'pixel_qa', 'radsat_qa')])
     
-#     img = (new.copyProperties(img)
-#              .set('system:time_start', img.get('system:time_start'))
-#           )
-# #     # SF: now treat as L5/7 for calculating TCAP
-# #     img = img.set('SPACECRAFT_ID', 'LANDSAT_7')
-#     return img
+    img = (new.copyProperties(img)
+             .set('system:time_start', img.get('system:time_start'))
+          )
+#     # SF: now treat as L5/7 for calculating TCAP
+#     img = img.set('SATELLITE', 'LANDSAT_7')
+    return img
 
 
-def pqa_mask(img, fill=0, dilated_cloud=0, cirrus=0, cloud=0, shadow=0, snow=0, clear=None, water=0, cloud_conf=1, shadow_conf=1, snow_conf=1, cirrus_conf=1):
+def pqa_mask(img, fill=0, clear=1, water=0, shadow=0, snow=0, cloud=0, 
+             cloud_conf=1, cirrus_conf=1, terrain=0):
     """Keep pixels which meet all the given critera, and mask out others.
-    Values should match the Landsat 8 and Landsat 4-7 product guide QA table with 
+    Values should match the LEDAPS and LaSRC product guide table with 
     0=='No' and 1=='Yes', None='accept either' and conf values: 0,1,2,3=='None', 'low', 'med', 'high'
-    https://www.usgs.gov/media/files/landsat-8-collection-2-level-2-science-product-guide
-    https://www.usgs.gov/media/files/landsat-4-7-collection-2-level-2-science-product-guide
-   
+    https://www.usgs.gov/media/files/land-surface-reflectance-code-lasrc-product-guide
+    https://www.usgs.gov/media/files/landsat-4-7-surface-reflectance-code-ledaps-product-guide
+    
     'Less than or equal to' operation applied to conf values. For example, 
     cloud_conf=2 means keep medium and low confidence clouds. 
     
-    Defaults retain non-fill pixels with no water, snow, clouds, and only low or no confidence for all the confidence bits. This is conservative as medium confidence clouds are masked out.
+    Defaults retain clear, non-fill pixels with no water, snow, clouds, terrain
+    occlusion, and low confidence clouds and cirrus.
     
-    L4-7 does not have cirrus or cirrus confidence bits. Setting cirrus=1 results in a completely masked out image for L4-7.
+    L4-7 does not have cirrus confidence or terrain occlusion. 
+    Warning: Terrain occlusion set to 1 will completely mask out all pixels in L4-7.
     
     returns: ee.Image
         Mask which can be applied using ee.Image.updateMask()
     """    
-    pixqa = img.select('QA_PIXEL')
+    pixqa = img.select('pixel_qa')
     
     mask = img.mask() # use existing mask or ee.Image(1)?
     if fill is not None:
         mask = mask.And(pixqa.bitwiseAnd(1).eq(fill))
-    if dilated_cloud is not None:
-        mask = mask.And(pixqa.bitwiseAnd(1<<1).eq(dilated_cloud<<1))
-    if cirrus is not None:
-        mask = mask.And(pixqa.bitwiseAnd(1<<2).eq(cirrus<<2))
-    if cloud is not None:
-        mask = mask.And(pixqa.bitwiseAnd(1<<3).eq(cloud<<3))                    
-    if shadow is not None:
-        mask = mask.And(pixqa.bitwiseAnd(1<<4).eq(shadow<<4))
-    if snow is not None:
-        mask = mask.And(pixqa.bitwiseAnd(1<<5).eq(snow<<5))
     if clear is not None:
-        mask = mask.And(pixqa.bitwiseAnd(1<<6).eq(clear<<6))
+        mask = mask.And(pixqa.bitwiseAnd(1<<1).eq(clear<<1))
     if water is not None:
-        mask = mask.And(pixqa.bitwiseAnd(1<<7).eq(water<<7))
+        mask = mask.And(pixqa.bitwiseAnd(1<<2).eq(water<<2))
+    if shadow is not None:
+        mask = mask.And(pixqa.bitwiseAnd(1<<3).eq(shadow<<3))
+    if snow is not None:
+        mask = mask.And(pixqa.bitwiseAnd(1<<4).eq(snow<<4))
+    if cloud is not None:
+        mask = mask.And(pixqa.bitwiseAnd(1<<5).eq(cloud<<5))
     if cloud_conf is not None:
-        mask = mask.And(pixqa.bitwiseAnd(3<<8).lte(cloud_conf<<8))
-    if shadow_conf is not None:
-        mask = mask.And(pixqa.bitwiseAnd(3<<10).lte(shadow_conf<<10))
-    if snow_conf is not None:
-        mask = mask.And(pixqa.bitwiseAnd(3<<12).lte(snow_conf<<12))
+        mask = mask.And(pixqa.bitwiseAnd(3<<6).lte(cloud_conf<<6))
     if cirrus_conf is not None:
-        mask = mask.And(pixqa.bitwiseAnd(3<<14).lte(cirrus_conf<<14))
+        mask = mask.And(pixqa.bitwiseAnd(3<<8).lte(cirrus_conf<<8))
+    if terrain is not None:
+        mask = mask.And(pixqa.bitwiseAnd(1<<10).eq(terrain<<10))
         
     return mask
     
 
-def sr_mask(img, opt_lo=7273, opt_hi=43636, edges=True, aerosol=True, **kwargs):
-    """ Return pixel mask based on surface reflectance QA bands and valid ranges.
-    Assumes optical bands have been renamed as "cb", "blue", etc.
-    
+def sr_mask(img, opt_lo=0, opt_hi=10000, edges=True, aerosol=False, **kwargs):
+    """ Update pixel mask based on surface reflectance QA bands.
     opt_low: float or list of floats
         The lowest valid pixel value for all optical bands (float) or each band (list)
     
@@ -198,7 +183,7 @@ def sr_mask(img, opt_lo=7273, opt_hi=43636, edges=True, aerosol=True, **kwargs):
         The highest valid pixel value for all optical (float) or each band (list)
         
     aerosol: bool
-        Remove high aerosols in L8. Ignored for L4-7 which do not have sr_qa_aerosol.
+        Remove high aerosols in L8. No aerosol band in L4-7 so throws an error.
         
     **kwargs:
         Options passed to pqa_mask function
@@ -208,14 +193,14 @@ def sr_mask(img, opt_lo=7273, opt_hi=43636, edges=True, aerosol=True, **kwargs):
     """
     # TODO: Allow selection of bands to return and to consider when masking
     
-    sat = img.get('SPACECRAFT_ID')
+    sat = img.get('SATELLITE')
     
     # Apply pqa mask
     pqa = pqa_mask(img, **kwargs)  
     
     # Keep only valid values in the optical range
     # TODO: Mask for thermal too?
-    opt = img.select(ee.Dictionary(__sr_eedict.get(sat)).get('opt'))
+    opt = img.select(ee.Dictionary(__srbands.get(sat)).get('opt'))
     valid = opt.lt(opt_lo).Or(opt.gt(opt_hi)).reduce(ee.Reducer.max()).eq(0)
     
     # Remove edge pixels that don't occur in all bands (common in L5)
@@ -224,21 +209,18 @@ def sr_mask(img, opt_lo=7273, opt_hi=43636, edges=True, aerosol=True, **kwargs):
     else:
         edge = ee.Image(1)
     
-    # Keep pixels without radiometric saturation in any band. 
+    # Keep pixels without radiometric saturation in any band
     # Note: oversaturation can rollover into valid range, and pixels outside 
     #       valid range don't necessarily register as oversaturated
-    # Note 2: Terrain occlusion included in radsat band for Landsat 8,
-    #         so enforcing 0 also filters for no terrain occlusion.
     # TODO: blue and coastal often oversatured, consider just clamping 0-1
-    # TODO: QA_RADSAT bitmask could be used to only filter for certain bands.
-    rad = img.select('QA_RADSAT').eq(0)
+    rad = img.select('radsat_qa').eq(0)
     
     # Mask out high aerosols in Landsat 8. Not possible in L4-7.
     if aerosol:
         # TODO: avoid using ee.Algorithm.If
-        has_aero = img.bandNames().contains('SR_QA_AEROSOL')
+        has_aero = img.bandNames().contains('sr_aerosol')
         aero = ee.Algorithms.If(has_aero,
-                                img.select('SR_QA_AEROSOL').lt(192),
+                                img.select('sr_aerosol').lt(192),
                                 ee.Image(1))
     else:
         aero = ee.Image(1)
@@ -356,7 +338,7 @@ def tdom2(imgs, sum_bands=['nir', 'swir1'], zscore_thresh=-1, sum_thresh=0.35,
 
 
 def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None, 
-                  sats=["LANDSAT_4", "LANDSAT_5", "LANDSAT_7", "LANDSAT_8"],
+                  sats=["L4", "L5", "L7", "L8"], harmonize=True,
                   rescale=True, cloud_cover=70, mask_func=sr_mask, slc_on=False,
                   tdom=False, exclude=None, mask_kwargs={}, tdom_kwargs={}
                  ):
@@ -394,6 +376,9 @@ def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None,
     rescale: bool
         whether to rescale bands to reflectance (i.e. 0-1).
         
+    harmonize: bool
+        whether to harmonize L8 to L57 following Roy et al. 20??
+        
     cloud_cover: int
         Maximum of percent of clouds allowed in an image
         
@@ -426,23 +411,36 @@ def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None,
     Steven Filippelli
     
     """
-    # TODO: Add ability to keep a list of given bands and use them in masking    
+    # TODO: Add ability to keep a list of given bands and use them in masking
+    
+    sat_dict = {
+        'L4':{'id':'LANDSAT/LT04/C01/T1_SR',
+              'bands':['blue', 'green', 'red', 'nir', 'swir1','therm1', 'swir2', 'sr_atmos_opacity', 'sr_cloud_qa', 'pixel_qa', 'radsat_qa']},
+        'L5':{'id':'LANDSAT/LT05/C01/T1_SR',
+              'bands':['blue', 'green', 'red', 'nir', 'swir1','therm1', 'swir2', 'sr_atmos_opacity', 'sr_cloud_qa', 'pixel_qa', 'radsat_qa']},
+        'L7':{'id':'LANDSAT/LE07/C01/T1_SR',
+              'bands':['blue', 'green', 'red', 'nir', 'swir1','therm1', 'swir2', 'sr_atmos_opacity', 'sr_cloud_qa', 'pixel_qa', 'radsat_qa']},
+        'L8':{'id':'LANDSAT/LC08/C01/T1_SR',
+              'bands':['cb', 'blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'therm1', 'therm2', 'sr_aerosol', 'pixel_qa', 'radsat_qa']}
+               }
     
     lx_imgs = ee.ImageCollection([])
     for sat in sats:
-        sat_bands = __sr_dict[sat]['all']
-        imgs = (ee.ImageCollection(__sr_dict[sat]['id'])
+        sat_bands = sat_dict[sat]['bands']
+        imgs = (ee.ImageCollection(sat_dict[sat]['id'])
                 .filterBounds(aoi)
                 .filterDate(start, end)
                 .filter(ee.Filter.calendarRange(startdoy,enddoy))
-                .select(list(range(19)), sat_bands)
+                .select(list(range(len(sat_bands))), sat_bands)
                )
-        if (sat=='LANDSAT_7') and (slc_on):
-            imgs = imgs.filterMetadata('SENSOR_MODE_SLC', 'equals', 'ON')
+        if (sat=='L7') and (slc_on):
+            imgs = imgs.filterDate(ee.Date.fromYMD(1998,1,1),ee.Date.fromYMD(2003,5,31))
         if cloud_cover<100:
             imgs = imgs.filterMetadata('CLOUD_COVER', 'not_greater_than', cloud_cover)
         if exclude:
             imgs = imgs.filter(ee.Filter.inList('system:index', exclude).Not())
+        if (sat=='L8') and (harmonize):
+            imgs = imgs.map(l8sr_harmonize)
         if mask_func:
             imgs = imgs.map(lambda i: i.updateMask(mask_func(i, **mask_kwargs)))
         if rescale:
@@ -451,12 +449,12 @@ def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None,
             # tdom should be after rescale otherwise defaults for sum_thresh will need to be changed for typical runs
             imgs = tdom2(imgs, **tdom_kwargs)
         if bands:
-            # TODO: allow selection of bands that don't exist while keeping those in 'bands' that do? Or keep error?
-            imgs = imgs.select(bands)
+            imgs = imgs.select(bands) 
         
         lx_imgs = lx_imgs.merge(imgs)
 
-    return lx_imgs
+    return lx_imgs    
+    
     
     
 ###############################################################################
@@ -601,7 +599,6 @@ def ndsi(i):
 
 # ---Tasseled cap band coefficients--------
 # TODO: add TOA coefficients for TM TOA
-# TODO: add crist and cicone 1984 coefficients
 
 # Baig 2014 coeffs - TOA refl (http://www.tandfonline.com/doi/pdf/10.1080/2150704X.2014.915434)
 l8_tc_coeffs = [ee.Image([0.3029, 0.2786, 0.4733, 0.5599, 0.508, 0.1872]),
@@ -644,7 +641,7 @@ def tasseled_cap(image, sr=True):
         Image to perform tasseled cap on. Bands must be named by color not num.
         
     sr: bool
-        Whether to use surface reflectance coefficients. For Collection 2 OLI harmonization with TM/ETM+ may not be necessary.
+        Whether to use surface reflectance coefficients. OLI must be harmonized to TM/ETM+ first.
 
     Returns
     -------
@@ -667,7 +664,7 @@ def tasseled_cap(image, sr=True):
     if sr:
         coeffs = ee.List(sr_tc_coeffs)
     else:
-        coeffs = ee.List(toa_coeff_dict.get(image.get('SPACECRAFT_ID')))
+        coeffs = ee.List(toa_coeff_dict.get(image.get('SATELLITE')))
                   
     # Compute the tc transformation and give it useful names
     tco = coeffs.map(mult_sum)
