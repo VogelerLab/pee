@@ -41,7 +41,15 @@ __sr_dict = {
                  'qa':['SR_QA_AEROSOL', 'QA_PIXEL', 'QA_RADSAT'],
                  'orig':['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7', 'SR_QA_AEROSOL', 'ST_B10', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT'],
                  'all':['cb', 'blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'SR_QA_AEROSOL', 'st', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT']
-                }   
+                },
+    'LANDSAT_9':{'id':'LANDSAT/LC09/C02/T1_L2',
+             'opt':['cb','blue', 'green', 'red', 'nir', 'swir1', 'swir2'],
+             'st_other':['ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD'],
+             'atmos':[],
+             'qa':['SR_QA_AEROSOL', 'QA_PIXEL', 'QA_RADSAT'],
+             'orig':['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7', 'SR_QA_AEROSOL', 'ST_B10', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT'],
+             'all':['cb', 'blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'SR_QA_AEROSOL', 'st', 'ST_ATRAN', 'ST_CDIST', 'ST_DRAD', 'ST_EMIS', 'ST_EMSD', 'ST_QA', 'ST_TRAD', 'ST_URAD', 'QA_PIXEL', 'QA_RADSAT']
+            } 
     }
 __sr_eedict = ee.Dictionary(__sr_dict)
 
@@ -50,7 +58,8 @@ __atmos_scale = ee.Dictionary({
     'LANDSAT_4':ee.Image(0.001),
     'LANDSAT_5':ee.Image(0.001),
     'LANDSAT_7':ee.Image(0.001),
-    'LANDSAT_8':ee.Image().select([])
+    'LANDSAT_8':ee.Image().select([]),
+    'LANDSAT_9':ee.Image().select([])
 })
 
 
@@ -59,6 +68,8 @@ def swap_bandnames(image):
        band order.
     """
     band_dicts = ee.Dictionary({
+    'LANDSAT_9': {'SR_B1':'cb', 'SR_B2':'blue', 'SR_B3':'green', 'SR_B4':'red', 'SR_B5':'nir', 
+                  'SR_B6':'swir1', 'SR_B7':'swir2', 'ST_B10':'st'},
     'LANDSAT_8': {'SR_B1':'cb', 'SR_B2':'blue', 'SR_B3':'green', 'SR_B4':'red', 'SR_B5':'nir', 
                   'SR_B6':'swir1', 'SR_B7':'swir2', 'ST_B10':'st'},
     'LANDSAT_7': {'SR_B1':'blue', 'SR_B2':'green', 'SR_B3':'red', 'SR_B4':'nir', 
@@ -141,9 +152,9 @@ def sr_rescale(img):
 
 def pqa_mask(img, fill=0, dilated_cloud=0, cirrus=0, cloud=0, shadow=0, snow=0, clear=None, water=0, cloud_conf=1, shadow_conf=1, snow_conf=1, cirrus_conf=1):
     """Keep pixels which meet all the given critera, and mask out others.
-    Values should match the Landsat 8 and Landsat 4-7 product guide QA table with 
+    Values should match the Landsat 8-9 and Landsat 4-7 product guide QA table with 
     0=='No' and 1=='Yes', None='accept either' and conf values: 0,1,2,3=='None', 'low', 'med', 'high'
-    https://www.usgs.gov/media/files/landsat-8-collection-2-level-2-science-product-guide
+    https://www.usgs.gov/media/files/landsat-8-9-collection-2-level-2-science-product-guide
     https://www.usgs.gov/media/files/landsat-4-7-collection-2-level-2-science-product-guide
    
     'Less than or equal to' operation applied to conf values. For example, 
@@ -227,13 +238,13 @@ def sr_mask(img, opt_lo=7273, opt_hi=43636, edges=True, aerosol=True, **kwargs):
     # Keep pixels without radiometric saturation in any band. 
     # Note: oversaturation can rollover into valid range, and pixels outside 
     #       valid range don't necessarily register as oversaturated
-    # Note 2: Terrain occlusion included in radsat band for Landsat 8,
+    # Note 2: Terrain occlusion included in radsat band for Landsat 8-9,
     #         so enforcing 0 also filters for no terrain occlusion.
     # TODO: blue and coastal often oversatured, consider just clamping 0-1
     # TODO: QA_RADSAT bitmask could be used to only filter for certain bands.
     rad = img.select('QA_RADSAT').eq(0)
     
-    # Mask out high aerosols in Landsat 8. Not possible in L4-7.
+    # Mask out high aerosols in Landsat 8-9. Not possible in L4-7.
     if aerosol:
         # TODO: avoid using ee.Algorithm.If
         has_aero = img.bandNames().contains('SR_QA_AEROSOL')
@@ -356,7 +367,7 @@ def tdom2(imgs, sum_bands=['nir', 'swir1'], zscore_thresh=-1, sum_thresh=0.35,
 
 
 def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None, 
-                  sats=["LANDSAT_4", "LANDSAT_5", "LANDSAT_7", "LANDSAT_8"],
+                  sats=["LANDSAT_4", "LANDSAT_5", "LANDSAT_7", "LANDSAT_8", "LANDSAT_9"],
                   rescale=True, cloud_cover=70, mask_func=sr_mask, slc_on=False,
                   tdom=False, exclude=None, mask_kwargs={}, tdom_kwargs={}
                  ):
@@ -364,7 +375,7 @@ def sr_collection(aoi, start, end, startdoy=1, enddoy=366, bands=None,
 
     Get collection of all landsat images that intersect the given feature,
     feature collection, or geometry for the given time frame. Images are
-    prepared by renaming and optionally rescaling bands, harmonizing landsat 8,
+    prepared by renaming and optionally rescaling bands, harmonizing landsat 8-9,
     filtering for percent cloud cover, and applying a masking function.
 
     Parameters
@@ -631,7 +642,8 @@ sr_tc_coeffs = [ee.Image([0.2043, 0.4158, 0.5524, 0.5741, 0.3124, 0.2303]),
 toa_coeff_dict =ee.Dictionary({"LANDSAT_4": l7_tc_coeffs,
                                "LANDSAT_5": l7_tc_coeffs,
                                "LANDSAT_7": l7_tc_coeffs,
-                               "LANDSAT_8": l8_tc_coeffs})
+                               "LANDSAT_8": l8_tc_coeffs,
+                               "LANDSAT_9": l8_tc_coeffs})
 tc_names = ['tcb','tcg', 'tcw', 'tc4','tc5','tc6']
 
 
@@ -703,7 +715,7 @@ def specixs(image, ixlist='all', sr=True):
     Parameters
     ----------
     image: ee.Image
-        Landsat 5-8 image with bands labeled by color rather than band number.
+        Landsat 5-9 image with bands labeled by color rather than band number.
 
     indices: list
         List of desired band indices to return in a new image.
