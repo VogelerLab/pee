@@ -444,7 +444,7 @@ def split_stack(paths, outdir, basename, temp="{base}_{tile}.tif", nodata=-32768
 
 
 def annual_composites(aoi, starty, endy, startdoy, enddoy, coll_func, comp_func,
-                      coll_kwargs={}, comp_kwargs={}, fill=False):
+                      coll_kwargs={}, comp_kwargs={}, fill=False, resample='nearest'):
     """ Create an annual composite image collection using a function to prepare
     an image collection and a function to reduce a collection to an image.
     
@@ -481,6 +481,10 @@ def annual_composites(aoi, starty, endy, startdoy, enddoy, coll_func, comp_func,
     fill: bool
         If True fill years between starty and endy with an empty image if there
         are no valid images returned by coll_func for a particular year
+    
+    resample: str
+        resampling approach of 'bilinear' or 'bicubic' to apply to image collection before 
+        compositing so that it is used in the next reprojection
         
     Returns: ee.ImageCollection
         An image collection of annual compsite images with year and system:time_start
@@ -494,6 +498,9 @@ def annual_composites(aoi, starty, endy, startdoy, enddoy, coll_func, comp_func,
         end = ee.Date.fromYMD(endy,1,1).advance(enddoy-1, 'day')
         
         imgs = ee.ImageCollection(coll_func(aoi, start, end, **coll_kwargs))
+        
+        if resample!='nearest':
+            imgs = imgs.map(lambda i: i.resample(resample))
         
         img = ee.Algorithms.If(imgs.size(), 
                                (ee.Image(comp_func(imgs, **comp_kwargs))
