@@ -13,25 +13,11 @@ from math import pi
 
 def rename_bands(img):
     """
-        GEE naming convention:
-        Name  Min Max   Scale   Resolution	Wavelength	Description
-        B1    0   10000	0.0001  60 METERS   443nm       Aerosols
-        B2    0   10000	0.0001	10 METERS   490nm       Blue
-        B3    0   10000	0.0001	10 METERS   560nm       Green
-        B4    0   10000	0.0001	10 METERS   665nm       Red
-        B5    0   10000	0.0001	20 METERS   705nm       Red Edge 1
-        B6    0   10000	0.0001	20 METERS   740nm       Red Edge 2
-        B7    0   10000	0.0001	20 METERS   783nm       Red Edge 3
-        B8    0   10000	0.0001	10 METERS   842nm       NIR
-        B8a   0   10000	0.0001	20 METERS   865nm       Red Edge 4
-        B9    0   10000	0.0001	60 METERS   940nm       Water vapor
-        B10   0   10000	0.0001	60 METERS   1375nm      Cirrus
-        B11   0   10000	0.0001	20 METERS   1610nm      SWIR 1
-        B12   0   10000	0.0001	20 METERS   2190nm      SWIR 2
-        QA10                    10 METERS               Always empty
-        QA20                    20 METERS               Always empty
-        QA60                    60 METERS               Cloud mask
-        """
+    Rename bands for an S2 image.
+    
+    This is should be applicable for the original S2 collections and the recommended
+    L2A collection "COPERNICUS/S2_SR_HARMONIZED", which has additional bands.
+    """
     rename_dict = ee.Dictionary(
                   {'B1':'cb',
                    'B2':'blue',
@@ -43,17 +29,23 @@ def rename_bands(img):
                    'B8':'nir',
                    'B8A':'re4',
                    'B9':'waterVapor',
-                   'B10':'cirrus',
                    'B11':'swir1',
                    'B12':'swir2',
-                   'QA10':'qa10',
-                   'QA20':'qa20',
-                   'QA60':'qa60',
                    'AOT':'aot',
                    'WVP':'wvp',
                    'SCL':'scl',
+                   'TCI_R':'tci_r',
+                   'TCI_G':'tci_g',
+                   'TCI_B':'tci_b',
                    'MSK_CLDPRB':'msk_cldprb',
-                   'MSK_SNWPRB':'msk_snwprb'})
+                   'MSK_SNWPRB':'msk_snwprb',
+                   'QA10':'qa10',
+                   'QA20':'qa20',
+                   'QA60':'qa60',
+                   'MSK_CLASSI_OPAQUE':'msk_opaque',
+                   'MSK_CLASSI_CIRRUS':'msk_cirrus',
+                   'MSK_CLASSI_SNOW_ICE':'msk_snowice'
+                   })
     bands = img.bandNames()
     newbands = rename_dict.values(bands)
     return img.select(bands, newbands)
@@ -86,7 +78,32 @@ def prep_l2a_img(img):
             .copyProperties(img,['system:time_start', 'system:time_end', 'system:footprint'])
             .set('date', img.date().format('YYYY-MM-dd')))
     return out
+
+def prep_sr_harm_img(img):
+    """Rename and rescale all (available) bands to surface reflectance for "COPERNICUS/S2_SR_HARMONIZED" collection."""
+    img = rename_bands(img)
     
+    optbands = ['cb', 'blue', 'green', 'red', 're1', 're2', 're3', 'nir', 're4', 'waterVapor', 'cirrus', 'swir1', 'swir2']
+    optbands = img.bandNames().filter(ee.Filter.inList('item', optbands))
+    opt = img.select(optbands).multiply(0.0001)
+    
+    tcibands = ['tci_r', 'tci_g', 'tci_b']
+    tcibands = img.bandNames().filter(ee.Filter.inList('item', tcibands))
+    tci = img.select(tcibands)
+    
+    atmbands = ['aot', 'wvp']
+    atmbands = img.bandNames().filter(ee.Filter.inList('item', atmbands))
+    atm = img.select(atmbands).multiply(0.001)
+    
+    qabands = ['qa60', 'scl', 'msk_cldprb', 'msk_snwprb', 'msk_opaque', 'msk_cirrus', 'msk_snowice']
+    qabands = img.bandNames().filter(ee.Filter.inList('item', qabands))
+    qa = img.select(qabands)
+    
+    t = ee.Image([opt, tci, atm, qa])
+    out = (t.copyProperties(img)
+            .copyProperties(img,['system:time_start', 'system:time_end', 'system:footprint'])
+            .set('date', img.date().format('YYYY-MM-dd')))
+    return out
 
 #--------------- Cloud Masking ----------------------------------------------#
 
@@ -122,7 +139,7 @@ def sentinelCloudScore(img):
     blueCirrusScore = blueCirrusScore.max(_rescale(img, 'img.cb', [0.1, 0.5]))
     blueCirrusScore = blueCirrusScore.max(_rescale(img, 'img.cirrus', [0.1, 0.3]))
   
-    score = score.min(blueCirrusScore);
+    score = score.min(blueCirrusScore)
 
     # Clouds are reasonably bright in all visible bands.
     score = score.min(_rescale(img, 'img.red + img.green + img.blue', [0.2, 0.8]))
@@ -351,6 +368,66 @@ def dailyMosaics(imgs):
     imgs = days.map(unique_days)
     imgs = ee.ImageCollection.fromImages(imgs)
     
+    return imgs
+
+
+def dailyMosaics2(imgs):
+    """ 
+    Method for daily mosaics taken from - https://code.earthengine.google.com/ec5f79e5bd195ec0da0ddbdc2cd11088
+    This method may be more efficient than GTAC's method (dailyMosaic) according to a brief Profiler test
+    """
+    # set date on each image
+    def set_date(img):
+        date = img.date().format('YYYY-MM-dd')
+        return img.set('date', date)
+    
+    imgs = imgs.map(set_date)
+  
+    # 'distinct' removes duplicates from a collection based on a property.
+    distinctDates_S2_sr = imgs.distinct('date').sort('date')
+
+    # define the filter
+    filt = ee.Filter.equals(leftField='date', rightField='date')
+
+    # 'ee.Join.saveAll' Returns a join that pairs each element from the first collection with a group of matching elements from the second collection
+    # the matching images are stored in a new property called 'date_match'
+    join = ee.Join.saveAll('date_match')
+
+    # 'apply' Joins to collections.
+    joinCol_S2_sr = join.apply(distinctDates_S2_sr, imgs, filt)
+
+    # This function mosaics image acquired on the same day (same image swath)
+    def mosaic_collection(img):
+        orig = img
+
+        # create a collection of the date-matching images
+        col = ee.ImageCollection.fromImages(img.get('date_match')) 
+
+        # extract collection properties to assign to the mosaic
+        time_start = col.aggregate_min('system:time_start')
+        time_end = col.aggregate_max('system:time_end')
+        index_list = col.aggregate_array('system:index')
+        index_list = index_list.join(',')
+        scene_count = col.size()
+
+        # get the unified geometry of the collection (outer boundary)
+        col_geo = col.geometry().dissolve()
+
+        # clip the mosaic to set a geometry to it
+        mosaic = col.mosaic().clip(col_geo).copyProperties(img, ["system:time_start", "system:index", "date", "month", "SENSING_ORBIT_NUMBER", "PROCESSING_BASELINE", "SPACECRAFT_NAME", "MEAN_SOLAR_ZENITH_ANGLE", "MEAN_SOLAR_AZIMUTH_ANGLE"])
+
+        # set the extracted properties to the mosaic
+        mosaic = mosaic.set({'system:time_start': time_start,
+                             'system:time_end': time_end,
+                             'index_list': index_list,
+                             'scene_count': scene_count})
+
+        # # (don't think this is needed) reset the projection to epsg:32632 as mosaic changes it to epsg:4326 (otherwise the registration fails)
+        # mosaic = ee.Image(mosaic).setDefaultProjection('epsg:32613', null, 10) #'epsg:32636'
+
+        return mosaic
+  
+    imgs = ee.ImageCollection(joinCol_S2_sr.map(mosaic_collection))
     return imgs
 
 
